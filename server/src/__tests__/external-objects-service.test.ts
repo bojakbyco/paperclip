@@ -375,7 +375,7 @@ describeEmbeddedPostgres("externalObjectService", () => {
     await db.insert(issues).values({
       id: issueId,
       companyId,
-      identifier: "PAP-2265",
+      identifier: `PAP-${companyId.replace(/-/g, "").slice(0, 12).toUpperCase()}`,
       title: "External refs",
       description: "Track https://github.com/acme/app/pull/42?token=secret#discussion twice https://github.com/acme/app/pull/42.",
       status: "todo",
@@ -447,7 +447,7 @@ describeEmbeddedPostgres("externalObjectService", () => {
           retryAfterSeconds: 60,
         }),
     };
-    const svc = externalObjectService(db, { resolvers: [resolver] });
+    const svc = externalObjectService(db, { resolvers: [resolver], github: false });
     await svc.syncIssue(issueId);
     const object = await db.select().from(externalObjects).then((rows) => rows[0]!);
 
@@ -474,7 +474,7 @@ describeEmbeddedPostgres("externalObjectService", () => {
     const objectRows = await db.select().from(externalObjects);
     expect(objectRows).toHaveLength(2);
     expect(new Set(objectRows.map((row) => row.companyId))).toEqual(new Set([first.companyId, second.companyId]));
-    expect(new Set(objectRows.map((row) => row.canonicalIdentityHash))).toHaveSize(1);
+    expect(new Set(objectRows.map((row) => row.canonicalIdentityHash)).size).toBe(1);
   });
 
   it("uses a mock plugin provider to detect and resolve non-GitHub objects", async () => {
