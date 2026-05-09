@@ -1,5 +1,17 @@
 # K8s Execution Target Changelog
 
+## M3b — 2026-05-09
+
+Production hardening of the Kubernetes execution path:
+
+- **Cross-replica Redis rate limiting.** New `createRedisSlidingWindowLimiter` backed by an atomic `EVAL` over Redis sorted sets. Factory in `server/src/routes/k8s-callback.ts` picks the Redis-backed limiter when `PAPERCLIP_REDIS_URL` is set, otherwise falls back to the in-memory limiter (single-replica only). Documented in `security-model.md`.
+- **Per-cluster image allow-list.** New `image_allowlist text[]` column on `cluster_connections`. Driver enforces prefix-match on both the resolved adapter image and any `target.imageOverride` before launching the Job; rejects with `errorCode: "image_not_allowed"`. New CLI subcommand `paperclip cluster set-image-allowlist`.
+- **Six new cloud-runtime adapter images:** `agent-runtime-codex`, `-gemini`, `-acpx`, `-opencode`, `-pi`, `-hermes`. Each has a Dockerfile, buildx-bake target, and busybox-style smoke test. Per-adapter env keys + default FQDN allow-list live in `packages/adapters/kubernetes-execution/src/orchestrator/adapter-defaults.ts` (single source of truth used by the driver). The driver now filters the per-Job env Secret to the adapter's declared `envKeys` and merges the adapter's `allowFqdns` into `ensureTenant`, removing the need for adapter-specific knowledge in server callers.
+- **Always-hash namespace derivation.** `deriveNamespaceName` now unconditionally appends `-<8-char-base36-hash(companyId)>` to every namespace, even for short clean slugs. Previously two companies with identical slugs (e.g. both named "Acme") collided on the `cluster_namespace_bindings` unique index, which blocked Company B onboarding. Always-hash makes namespace names globally unique by construction; the M1 takeover guard remains as belt-and-suspenders.
+- **Schema migration `0085`** adds the `image_allowlist` column.
+
+`hermes_local` ships as a stub Dockerfile because no upstream npm binary is wired into Paperclip locally yet (see `Dockerfile.hermes` for the gap and path forward).
+
 ## M3a — 2026-05-09
 
 Production-readiness pass on the M2 Kubernetes execution path:
