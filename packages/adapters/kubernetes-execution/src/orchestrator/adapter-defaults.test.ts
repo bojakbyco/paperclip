@@ -40,4 +40,11 @@ describe("adapter defaults registry", () => {
     expect(d.envKeys).toContain("OPENAI_API_KEY");
     expect(d.allowFqdns).toContain("api.openai.com");
   });
+
+  it("gemini_local has expected env + fqdn defaults", () => {
+    const d = getAdapterDefaults("gemini_local");
+    expect(d.runtimeImage).toMatch(/agent-runtime-gemini/);
+    expect(d.envKeys).toEqual(expect.arrayContaining(["GEMINI_API_KEY", "GOOGLE_API_KEY"]));
+    expect(d.allowFqdns).toContain("generativelanguage.googleapis.com");
+  });
 });

@@ -41,6 +41,11 @@ export const ADAPTER_DEFAULTS: Record<string, AdapterDefaults> = {
     envKeys: ["OPENAI_API_KEY"],
     allowFqdns: ["api.openai.com"],
   },
+  gemini_local: {
+    runtimeImage: `${REGISTRY_BASE}/agent-runtime-gemini`,
+    envKeys: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    allowFqdns: ["generativelanguage.googleapis.com"],
+  },
 };
 
 export function getAdapterDefaults(adapterType: string): AdapterDefaults {
