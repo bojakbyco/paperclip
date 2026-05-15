@@ -92,7 +92,6 @@ export function isLongDiffFile(file: Pick<DiffFileViewModel, "lineCount">) {
 
 export function toFileViewModels(diff: WorkspaceDiffResponse | null | undefined): DiffFileViewModel[] {
   return (diff?.files ?? []).map((file) => {
-    const patchWarnings = file.patches.flatMap((patch) => patch.warnings);
     const patches = buildFilePatches(file);
     const lineCount = patches.reduce((count, patch) => count + patch.lineCount, 0);
     return {
@@ -104,7 +103,7 @@ export function toFileViewModels(diff: WorkspaceDiffResponse | null | undefined)
       binary: file.binary,
       oversized: file.oversized,
       truncated: file.truncated,
-      warnings: [...file.warnings, ...patchWarnings],
+      warnings: file.warnings,
       patchKinds: file.patches.map((patch) => patch.kind),
       patches,
       patch: patches.find((patch) => patch.patch)?.patch ?? null,
@@ -119,10 +118,7 @@ export function diffSummary(diff: WorkspaceDiffResponse | null | undefined): Dif
   const fileCount = stats?.fileCount ?? 0;
   const additions = stats?.additions ?? 0;
   const deletions = stats?.deletions ?? 0;
-  const warningCount = (diff?.warnings.length ?? 0)
-    + (diff?.files ?? []).reduce((count, file) => {
-      return count + file.warnings.length + file.patches.reduce((patchCount, patch) => patchCount + patch.warnings.length, 0);
-    }, 0);
+  const warningCount = diff?.warnings.length ?? 0;
 
   return {
     changedLabel: `${fileCount} ${fileCount === 1 ? "file" : "files"}`,

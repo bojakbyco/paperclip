@@ -38,18 +38,43 @@ describe("workspace diff UI model", () => {
   });
 
   it("surfaces truncation and file warnings", () => {
+    const warning = { code: "patch_truncated" as const, message: "Patch was truncated.", path: "src/app.ts" };
     const file = changedFile({
       truncated: true,
-      warnings: [{ code: "patch_truncated", message: "Patch was truncated.", path: "src/app.ts" }],
+      warnings: [warning],
       patches: [],
     });
-    const diff = diffResponse({ files: [file], truncated: true });
+    const diff = diffResponse({ files: [file], truncated: true, warnings: [warning] });
 
     expect(buildFilePatch(file)).toBeNull();
+    expect(toFileViewModels(diff)[0]?.warnings).toEqual([warning]);
     expect(diffSummary(diff)).toMatchObject({
       warningCount: 1,
       truncated: true,
     });
+  });
+
+  it("does not duplicate aggregated patch warnings", () => {
+    const warning = { code: "patch_truncated" as const, message: "Patch was truncated.", path: "src/app.ts" };
+    const file = changedFile({
+      warnings: [warning],
+      patches: [
+        {
+          kind: "unstaged",
+          patch: null,
+          additions: 0,
+          deletions: 0,
+          binary: false,
+          oversized: false,
+          truncated: true,
+          warnings: [warning],
+        },
+      ],
+    });
+    const diff = diffResponse({ files: [file], warnings: [warning] });
+
+    expect(toFileViewModels(diff)[0]?.warnings).toEqual([warning]);
+    expect(diffSummary(diff).warningCount).toBe(1);
   });
 
   it("keeps staged and unstaged patches renderable as separate single-file diffs", () => {
