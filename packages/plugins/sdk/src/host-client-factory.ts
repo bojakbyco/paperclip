@@ -49,7 +49,7 @@
  */
 
 import type { PluginCapability } from "@paperclipai/shared";
-import type { WorkerToHostMethods, WorkerToHostMethodName } from "./protocol.js";
+import type { WorkerHostCallContext, WorkerToHostMethods, WorkerToHostMethodName } from "./protocol.js";
 import { PLUGIN_RPC_ERROR_CODES } from "./protocol.js";
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,19 @@ export class CapabilityDeniedError extends Error {
     super(
       `Plugin "${pluginId}" is missing required capability "${capability}" for method "${method}"`,
     );
+  }
+}
+
+/**
+ * Thrown when a worker→host call asks for company-scoped data outside the
+ * company authorized for the current top-level plugin invocation.
+ */
+export class InvocationScopeDeniedError extends Error {
+  override readonly name = "InvocationScopeDeniedError";
+  readonly code = PLUGIN_RPC_ERROR_CODES.CAPABILITY_DENIED;
+
+  constructor(pluginId: string, method: string, message: string) {
+    super(`Plugin "${pluginId}" is not allowed to perform "${method}": ${message}`);
   }
 }
 
@@ -314,6 +327,7 @@ export interface HostClientFactoryOptions {
  */
 type HostHandler<M extends WorkerToHostMethodName> = (
   params: WorkerToHostMethods[M][0],
+  context?: WorkerHostCallContext,
 ) => Promise<WorkerToHostMethods[M][1]>;
 
 /**
@@ -501,6 +515,81 @@ export function createHostClientHandlers(
   const { pluginId, services } = options;
   const capabilitySet = new Set<PluginCapability>(options.capabilities);
 
+  type CompanyScopeRequest =
+    | { kind: "none" }
+    | { kind: "single"; companyId: string }
+    | { kind: "all" };
+
+  const noCompanyScope: CompanyScopeRequest = { kind: "none" };
+
+  function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+
+  function readNonEmptyString(value: unknown): string | null {
+    return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
+  }
+
+  function requestedCompanyScope(
+    method: WorkerToHostMethodName,
+    params: unknown,
+  ): CompanyScopeRequest {
+    if (method === "companies.list") return { kind: "all" };
+    if (!isRecord(params)) return noCompanyScope;
+
+    const companyId = readNonEmptyString(params.companyId);
+    if (companyId) return { kind: "single", companyId };
+
+    if (params.scopeKind === "company") {
+      const scopeId = readNonEmptyString(params.scopeId);
+      return scopeId ? { kind: "single", companyId: scopeId } : { kind: "all" };
+    }
+
+    if (method === "events.subscribe" && isRecord(params.filter)) {
+      const filterCompanyId = readNonEmptyString(params.filter.companyId);
+      if (filterCompanyId) return { kind: "single", companyId: filterCompanyId };
+    }
+
+    return noCompanyScope;
+  }
+
+  function requireInvocationCompanyScope(
+    method: WorkerToHostMethodName,
+    params: unknown,
+    context?: WorkerHostCallContext,
+  ): void {
+    const requested = requestedCompanyScope(method, params);
+    if (requested.kind === "none") return;
+
+    if (context?.invalidInvocationScope) {
+      throw new InvocationScopeDeniedError(
+        pluginId,
+        method,
+        "the worker referenced a missing, expired, or unknown invocation scope",
+      );
+    }
+
+    const allowedCompanyId = readNonEmptyString(context?.invocationScope?.companyId);
+    if (!allowedCompanyId) return;
+
+    if (requested.kind === "all") {
+      if (method === "companies.list") return;
+      throw new InvocationScopeDeniedError(
+        pluginId,
+        method,
+        `the current invocation is scoped to company "${allowedCompanyId}"`,
+      );
+    }
+
+    if (requested.companyId !== allowedCompanyId) {
+      throw new InvocationScopeDeniedError(
+        pluginId,
+        method,
+        `requested company "${requested.companyId}" but the current invocation is scoped to company "${allowedCompanyId}"`,
+      );
+    }
+  }
+
   /**
    * Assert that the plugin has the required capability for a method.
    * Throws `CapabilityDeniedError` if the capability is missing.
@@ -525,9 +614,10 @@ export function createHostClientHandlers(
     method: M,
     handler: HostHandler<M>,
   ): HostHandler<M> {
-    return async (params: WorkerToHostMethods[M][0]) => {
+    return async (params: WorkerToHostMethods[M][0], context?: WorkerHostCallContext) => {
       requireCapability(method);
-      return handler(params);
+      requireInvocationCompanyScope(method, params, context);
+      return handler(params, context);
     };
   }
 
@@ -631,8 +721,13 @@ export function createHostClientHandlers(
     }),
 
     // Companies
-    "companies.list": gated("companies.list", async (params) => {
-      return services.companies.list(params);
+    "companies.list": gated("companies.list", async (params, context) => {
+      const rows = await services.companies.list(params);
+      const allowedCompanyId = readNonEmptyString(context?.invocationScope?.companyId);
+      if (!allowedCompanyId) return rows;
+      return rows.filter((company) =>
+        isRecord(company) && company.id === allowedCompanyId,
+      ) as WorkerToHostMethods["companies.list"][1];
     }),
     "companies.get": gated("companies.get", async (params) => {
       return services.companies.get(params);
