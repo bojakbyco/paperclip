@@ -614,6 +614,7 @@ const plugin = definePlugin({
       const userId = "userId" in variables && typeof variables.userId === "string" && variables.userId.trim()
         ? variables.userId.trim()
         : scopedUserId(input, request);
+      assertTrustedBridgeUserScope(userId, request);
       const nextVariables: Record<string, string | number | boolean> = { ...variables, userId };
       if (routineKey === MANUAL_REFRESH_ROUTINE_KEY && typeof nextVariables.rootIssueId !== "string") {
         throw new Error("rootIssueId is required for manual card refresh");

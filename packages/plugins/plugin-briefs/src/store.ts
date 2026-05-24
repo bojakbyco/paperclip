@@ -59,7 +59,10 @@ type BriefSourceRow = {
   is_intra_tree_blocked: boolean | null;
   event_at: string;
   metadata: unknown;
+  total_source_count?: number;
 };
+
+const SOURCES_PER_CARD_LIMIT = 200;
 
 function table(namespace: string, name: string): string {
   return `${namespace}.${name}`;
@@ -107,7 +110,12 @@ function toSource(row: BriefSourceRow): BriefCardSource {
   };
 }
 
-function toCard(row: BriefCardRow, snapshot: BriefSnapshot, sources: BriefCardSource[]): BriefCard {
+function toCard(
+  row: BriefCardRow,
+  snapshot: BriefSnapshot,
+  sources: BriefCardSource[],
+  totalSourceCount = sources.length,
+): BriefCard {
   return {
     id: row.id,
     companyId: row.company_id,
@@ -126,7 +134,7 @@ function toCard(row: BriefCardRow, snapshot: BriefSnapshot, sources: BriefCardSo
     lastMeaningfulEventAt: row.last_meaningful_event_at,
     snapshot,
     sources,
-    moreSourceCount: Math.max(0, sources.length - snapshot.taskRows.length),
+    moreSourceCount: Math.max(0, totalSourceCount - snapshot.taskRows.length),
   };
 }
 
@@ -148,29 +156,53 @@ export function createBriefsStore(db: PluginDatabaseClient) {
         [input.companyId, input.userId, Boolean(input.includeHidden), input.limit ?? 50],
       );
 
+      const snapshotIds = cardRows
+        .map((card) => card.latest_snapshot_id)
+        .filter((id): id is string => Boolean(id));
+      if (snapshotIds.length === 0) return [];
+
+      const snapshots = await db.query<BriefSnapshotRow>(
+        `SELECT id, company_id, user_id, card_id, summary_paragraph, summary_status, summary_model,
+                summary_tokens_in, summary_tokens_out, summary_failure_reason, task_rows, evidence_source_ids,
+                generated_by_agent_id, generated_by_run_id, deterministic_state_inputs, created_at
+         FROM ${snapshotsTable}
+         WHERE company_id = $1 AND user_id = $2 AND id = ANY($3::uuid[])`,
+        [input.companyId, input.userId, snapshotIds],
+      );
+      const snapshotsById = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
+      const cardIds = cardRows.map((card) => card.id);
+      const sourceRows = await db.query<BriefSourceRow>(
+        `WITH ranked_sources AS (
+           SELECT id, company_id, user_id, card_id, source_kind, source_id, issue_id, identifier, title_line,
+                  right_tag, link_path, is_intra_tree_blocked, event_at, metadata,
+                  count(*) OVER (PARTITION BY card_id)::int AS total_source_count,
+                  row_number() OVER (PARTITION BY card_id ORDER BY event_at DESC, id DESC) AS source_rank
+           FROM ${sourcesTable}
+           WHERE company_id = $1 AND user_id = $2 AND card_id = ANY($3::uuid[])
+         )
+         SELECT id, company_id, user_id, card_id, source_kind, source_id, issue_id, identifier, title_line,
+                right_tag, link_path, is_intra_tree_blocked, event_at, metadata, total_source_count
+         FROM ranked_sources
+         WHERE source_rank <= $4
+         ORDER BY card_id, event_at DESC, id DESC`,
+        [input.companyId, input.userId, cardIds, SOURCES_PER_CARD_LIMIT],
+      );
+      const sourcesByCardId = new Map<string, BriefCardSource[]>();
+      const sourceCountsByCardId = new Map<string, number>();
+      for (const row of sourceRows) {
+        const sources = sourcesByCardId.get(row.card_id) ?? [];
+        sources.push(toSource(row));
+        sourcesByCardId.set(row.card_id, sources);
+        sourceCountsByCardId.set(row.card_id, row.total_source_count ?? sources.length);
+      }
+
       const cards: BriefCard[] = [];
       for (const card of cardRows) {
         if (!card.latest_snapshot_id) continue;
-        const snapshots = await db.query<BriefSnapshotRow>(
-          `SELECT id, company_id, user_id, card_id, summary_paragraph, summary_status, summary_model,
-                  summary_tokens_in, summary_tokens_out, summary_failure_reason, task_rows, evidence_source_ids,
-                  generated_by_agent_id, generated_by_run_id, deterministic_state_inputs, created_at
-           FROM ${snapshotsTable}
-           WHERE company_id = $1 AND user_id = $2 AND card_id = $3 AND id = $4
-           LIMIT 1`,
-          [input.companyId, input.userId, card.id, card.latest_snapshot_id],
-        );
-        const snapshot = snapshots[0];
+        const snapshot = snapshotsById.get(card.latest_snapshot_id);
         if (!snapshot) continue;
-        const sources = await db.query<BriefSourceRow>(
-          `SELECT id, company_id, user_id, card_id, source_kind, source_id, issue_id, identifier, title_line,
-                  right_tag, link_path, is_intra_tree_blocked, event_at, metadata
-           FROM ${sourcesTable}
-           WHERE company_id = $1 AND user_id = $2 AND card_id = $3
-           ORDER BY event_at DESC, id DESC`,
-          [input.companyId, input.userId, card.id],
-        );
-        cards.push(toCard(card, toSnapshot(snapshot), sources.map(toSource)));
+        const sources = sourcesByCardId.get(card.id) ?? [];
+        cards.push(toCard(card, toSnapshot(snapshot), sources, sourceCountsByCardId.get(card.id)));
       }
       return cards;
     },

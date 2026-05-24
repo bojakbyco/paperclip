@@ -64,6 +64,9 @@ type CardRow = {
   hidden: boolean;
 };
 
+const cardId = "33333333-3333-4333-8333-333333333333";
+const snapshotId = "44444444-4444-4444-8444-444444444444";
+
 function createFakeDb(): PluginDatabaseClient {
   const cards = new Map<string, CardRow>();
   const key = (company: unknown, user: unknown, slug: unknown) => `${company}:${user}:${slug}`;
@@ -102,6 +105,100 @@ function createFakeDb(): PluginDatabaseClient {
   };
 }
 
+function createListFakeDb(): { db: PluginDatabaseClient; queries: Array<{ sql: string; params: unknown[] }> } {
+  const queries: Array<{ sql: string; params: unknown[] }> = [];
+  return {
+    queries,
+    db: {
+      namespace: "plugin_briefs_test",
+      async query<T>(sql: string, params: unknown[] = []): Promise<T[]> {
+        queries.push({ sql, params });
+        if (sql.includes("FROM plugin_briefs_test.briefs_cards")) {
+          return [{
+            id: cardId,
+            company_id: companyId,
+            user_id: userId,
+            slug: "pap-1",
+            title: "Briefs plugin planning",
+            grouping_description: "Issue tree rooted at PAP-1",
+            root_issue_id: rootIssueId,
+            state: "live",
+            summary_status: "ok",
+            pinned: false,
+            hidden: false,
+            stale_at: "2026-05-22T12:00:00.000Z",
+            expires_at: null,
+            latest_snapshot_id: snapshotId,
+            last_meaningful_event_at: "2026-05-22T12:00:00.000Z",
+          }] as T[];
+        }
+        if (sql.includes("FROM plugin_briefs_test.briefs_card_snapshots")) {
+          return [{
+            id: snapshotId,
+            company_id: companyId,
+            user_id: userId,
+            card_id: cardId,
+            summary_paragraph: "The work is moving.",
+            summary_status: "ok",
+            summary_model: "test",
+            summary_tokens_in: 10,
+            summary_tokens_out: 20,
+            summary_failure_reason: null,
+            task_rows: [],
+            evidence_source_ids: [],
+            generated_by_agent_id: null,
+            generated_by_run_id: null,
+            deterministic_state_inputs: {},
+            created_at: "2026-05-22T12:00:00.000Z",
+          }] as T[];
+        }
+        if (sql.includes("WITH ranked_sources AS")) {
+          return [
+            {
+              id: "55555555-5555-4555-8555-555555555555",
+              company_id: companyId,
+              user_id: userId,
+              card_id: cardId,
+              source_kind: "issue",
+              source_id: rootIssueId,
+              issue_id: rootIssueId,
+              identifier: "PAP-1",
+              title_line: "Briefs plugin planning",
+              right_tag: "live",
+              link_path: "/PAP/issues/PAP-1",
+              is_intra_tree_blocked: false,
+              event_at: "2026-05-22T12:00:00.000Z",
+              metadata: {},
+              total_source_count: 250,
+            },
+            {
+              id: "66666666-6666-4666-8666-666666666666",
+              company_id: companyId,
+              user_id: userId,
+              card_id: cardId,
+              source_kind: "run",
+              source_id: "run-1",
+              issue_id: rootIssueId,
+              identifier: "PAP-1",
+              title_line: "Agent run",
+              right_tag: "queued",
+              link_path: "/PAP/issues/PAP-1",
+              is_intra_tree_blocked: false,
+              event_at: "2026-05-22T11:59:00.000Z",
+              metadata: {},
+              total_source_count: 250,
+            },
+          ] as T[];
+        }
+        return [];
+      },
+      async execute(): Promise<{ rowCount: number }> {
+        return { rowCount: 0 };
+      },
+    },
+  };
+}
+
 describe("Briefs store", () => {
   it("keeps dismissed cards hidden when the same card is regenerated", async () => {
     const store = createBriefsStore(createFakeDb());
@@ -128,5 +225,21 @@ describe("Briefs store", () => {
     expect(regenerated.id).toBe(first.id);
     expect(regenerated.hidden).toBe(true);
     expect(regenerated.pinned).toBe(false);
+  });
+
+  it("loads card snapshots and capped sources in batches", async () => {
+    const { db, queries } = createListFakeDb();
+    const store = createBriefsStore(db);
+
+    const cards = await store.listCards({ companyId, userId });
+
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.sources).toHaveLength(2);
+    expect(cards[0]?.moreSourceCount).toBe(250);
+    expect(queries.filter((query) => query.sql.includes("FROM plugin_briefs_test.briefs_card_snapshots"))).toHaveLength(1);
+    const sourceQuery = queries.find((query) => query.sql.includes("WITH ranked_sources AS"));
+    expect(sourceQuery?.params[2]).toEqual([cardId]);
+    expect(sourceQuery?.params[3]).toBe(200);
+    expect(sourceQuery?.sql).toContain("row_number() OVER (PARTITION BY card_id");
   });
 });

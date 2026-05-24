@@ -275,6 +275,11 @@ describe("Briefs managed resources", () => {
       ...victimParams,
       cadence: "daily",
     }, context)).rejects.toThrow("Briefs user scope mismatch");
+    await expect(harness.performAction("run-managed-routine", {
+      companyId,
+      routineKey: BRIEFS_MANAGED_ROUTINE_KEYS[0],
+      variables: { userId: "victim-user" },
+    }, context)).rejects.toThrow("Briefs user scope mismatch");
   });
 
 });
