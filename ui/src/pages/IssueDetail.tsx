@@ -3714,13 +3714,11 @@ export function IssueDetail() {
         </div>
       )}
 
-      {issue.workMode === "planning" ? (
-        <IssuePlanDecompositionsSection
-          issueId={issue.id}
-          issueIdentifier={issue.identifier}
-          agentMap={agentMap}
-        />
-      ) : null}
+      <IssuePlanDecompositionsSection
+        issueId={issue.id}
+        issueIdentifier={issue.identifier}
+        agentMap={agentMap}
+      />
 
       <IssueDocumentsSection
         issue={issue}
