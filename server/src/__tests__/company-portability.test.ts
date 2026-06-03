@@ -969,6 +969,7 @@ describe("company portability", () => {
         leadAgentId: "agent-1",
         targetDate: "2026-03-31",
         color: "#123456",
+        icon: "rocket",
         status: "planned",
         executionWorkspacePolicy: {
           enabled: true,
@@ -1057,6 +1058,7 @@ describe("company portability", () => {
     });
 
     const extension = asTextFile(exported.files[".paperclip.yaml"]);
+    expect(extension).toContain('icon: "rocket"');
     expect(extension).toContain("workspaces:");
     expect(extension).toContain("main-repo:");
     expect(extension).toContain('repoUrl: "https://github.com/paperclipai/paperclip.git"');
@@ -1143,6 +1145,9 @@ describe("company portability", () => {
         defaultMode: "shared_workspace",
         defaultProjectWorkspaceId: "workspace-imported",
       }),
+    }));
+    expect(projectSvc.create).toHaveBeenCalledWith("company-imported", expect.objectContaining({
+      icon: "rocket",
     }));
     expect(issueSvc.create).toHaveBeenCalledWith("company-imported", expect.objectContaining({
       projectId: "project-imported",
