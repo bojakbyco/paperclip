@@ -244,7 +244,7 @@ function renderRecoveryChip(action: IssueRecoveryAction, selected: boolean): Rea
         tone.className,
         selected ? "!border-muted-foreground !text-muted-foreground" : null,
       )}
-      title={`${tone.label} — open the source issue to act.`}
+      title={`${tone.label} — open the source task to act.`}
     >
       <Icon className="h-2.5 w-2.5" aria-hidden />
       {tone.label}

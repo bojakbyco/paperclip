@@ -134,7 +134,7 @@ describe("IssueRecoveryActionCard", () => {
     expect(node.textContent).toContain("RECOVERY NEEDED");
     expect(node.textContent).toContain("Missing Disposition");
     expect(node.textContent).not.toContain("missing_disposition");
-    expect(node.textContent).toContain("This issue's run finished, but no next step was chosen.");
+    expect(node.textContent).toContain("This task's run finished, but no next step was chosen.");
     expect(node.textContent).toContain("ClaudeCoder");
     expect(node.textContent).toContain("CodexCoder");
     expect(node.textContent).toContain("Choose and record a valid issue disposition.");
@@ -173,7 +173,7 @@ describe("IssueRecoveryActionCard", () => {
     click(node.querySelector("[data-testid='recovery-action-resolve-trigger']"));
 
     expect(document.body.textContent).toContain("Try again");
-    expect(document.body.textContent).toContain("Mark issue done");
+    expect(document.body.textContent).toContain("Mark task done");
     expect(document.body.textContent).not.toContain("Mark blocked");
     expect(document.body.textContent).not.toContain("Delegate follow-up issue");
     click([...document.body.querySelectorAll("button")].find((button) => button.textContent?.includes("Try again")) ?? null);
@@ -188,7 +188,7 @@ describe("IssueRecoveryActionCard", () => {
     click(node.querySelector("[data-testid='recovery-action-resolve-trigger']"));
 
     expect(document.body.textContent).toContain("Try again");
-    expect(document.body.textContent).toContain("Mark issue done");
+    expect(document.body.textContent).toContain("Mark task done");
     expect(document.body.textContent).toContain("Send for review");
     expect(document.body.textContent).toContain("False positive, done");
     expect(document.body.textContent).toContain("False positive, review");

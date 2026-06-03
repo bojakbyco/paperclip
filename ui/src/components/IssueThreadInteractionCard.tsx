@@ -454,7 +454,7 @@ function SuggestTasksCard({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-        <span>{totalTasks === 1 ? "1 draft issue" : `${totalTasks} draft issues`}</span>
+        <span>{totalTasks === 1 ? "1 draft task" : `${totalTasks} draft tasks`}</span>
         {interaction.payload.defaultParentId ? (
           <TaskField label="Default parent" value={interaction.payload.defaultParentId} tone="subtle" />
         ) : null}
@@ -484,8 +484,8 @@ function SuggestTasksCard({
           </div>
           <p className="mt-1 leading-6">
             {skippedCount > 0
-              ? `Created ${createdCount} draft ${createdCount === 1 ? "issue" : "issues"} and skipped ${skippedCount} during review.`
-              : `Created all ${createdCount} draft ${createdCount === 1 ? "issue" : "issues"}.`}
+              ? `Created ${createdCount} draft ${createdCount === 1 ? "task" : "tasks"} and skipped ${skippedCount} during review.`
+              : `Created all ${createdCount} draft ${createdCount === 1 ? "task" : "tasks"}.`}
           </p>
         </div>
       ) : null}
@@ -510,8 +510,8 @@ function SuggestTasksCard({
             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               <span>
                 {selectedCount === totalTasks
-                  ? `All ${totalTasks} draft ${totalTasks === 1 ? "issue" : "issues"} selected`
-                  : `${selectedCount} of ${totalTasks} draft ${totalTasks === 1 ? "issue" : "issues"} selected`}
+                  ? `All ${totalTasks} draft ${totalTasks === 1 ? "task" : "tasks"} selected`
+                  : `${selectedCount} of ${totalTasks} draft ${totalTasks === 1 ? "task" : "tasks"} selected`}
               </span>
               {selectedCount < totalTasks ? (
                 <span>

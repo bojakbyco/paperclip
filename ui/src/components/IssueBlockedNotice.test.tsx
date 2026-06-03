@@ -124,11 +124,11 @@ describe("IssueBlockedNotice", () => {
       />,
     );
 
-    expect(node.textContent).toContain("This issue still needs a next step.");
+    expect(node.textContent).toContain("This task still needs a next step.");
     expect(node.textContent).toContain("Corrective wake queued for CodexCoder");
     expect(node.textContent).toContain("Detected progress: Updated the plan");
     expect(node.textContent).not.toContain("Retry now");
-    expect(node.textContent).not.toContain("Work on this issue is blocked until");
+    expect(node.textContent).not.toContain("Work on this task is blocked until");
     expect(node.querySelector('[data-successful-run-handoff="required"]')).not.toBeNull();
   });
 
