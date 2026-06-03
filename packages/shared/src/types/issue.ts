@@ -104,7 +104,7 @@ export interface IssueDocumentSummary {
   lockedAt: Date | null;
   lockedByAgentId: string | null;
   lockedByUserId: string | null;
-  sourceTrust: SourceTrustMetadata | null;
+  sourceTrust?: SourceTrustMetadata | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -593,7 +593,7 @@ export interface IssueComment {
   deletedByAgentId?: string | null;
   deletedByUserId?: string | null;
   deletedByRunId?: string | null;
-  sourceTrust: SourceTrustMetadata | null;
+  sourceTrust?: SourceTrustMetadata | null;
   followUpRequested?: boolean;
   createdAt: Date;
   updatedAt: Date;

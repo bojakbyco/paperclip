@@ -6,7 +6,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { agentsApi } from "../api/agents";
 import { companySkillsApi } from "../api/companySkills";
 import { queryKeys } from "../lib/queryKeys";
-import { AGENT_ROLES, type AdapterEnvironmentTestResult } from "@paperclipai/shared";
+import { AGENT_ROLES, type AdapterEnvironmentTestResult, type AgentPermissions } from "@paperclipai/shared";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -28,6 +28,8 @@ import { useDisabledAdaptersSync } from "../adapters/use-disabled-adapters";
 import { isValidAdapterType } from "../adapters/metadata";
 import { ReportsToPicker } from "../components/ReportsToPicker";
 import { buildNewAgentHirePayload } from "../lib/new-agent-hire-payload";
+import { TrustPresetSection } from "../components/TrustPresetSection";
+import { buildPermissionsForTrustPreset } from "../lib/trust-policy-ui";
 import {
   DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX,
   DEFAULT_CODEX_LOCAL_MODEL,
@@ -68,6 +70,9 @@ export function NewAgent() {
   const [role, setRole] = useState("general");
   const [reportsTo, setReportsTo] = useState<string | null>(null);
   const [configValues, setConfigValues] = useState<CreateConfigValues>(defaultCreateValues);
+  const [permissions, setPermissions] = useState<Partial<AgentPermissions>>(
+    buildPermissionsForTrustPreset(null, "standard"),
+  );
   const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
   const [roleOpen, setRoleOpen] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -156,6 +161,7 @@ export function NewAgent() {
         selectedSkillKeys,
         configValues,
         adapterConfig: buildAdapterConfig(),
+        permissions,
       }),
     );
   }
@@ -253,6 +259,14 @@ export function NewAgent() {
             value={reportsTo}
             onChange={setReportsTo}
             disabled={isFirstAgent}
+          />
+        </div>
+
+        <div className="border-t border-border px-4 py-4">
+          <TrustPresetSection
+            permissions={permissions}
+            onChange={setPermissions}
+            disabled={createAgent.isPending}
           />
         </div>
 
