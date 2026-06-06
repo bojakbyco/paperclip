@@ -102,6 +102,7 @@ import { assertEnvironmentSelectionForCompany } from "./environment-selection.js
 import { recoveryService } from "../services/recovery/service.js";
 import { resolveCoreTrustPreset } from "../services/trust-preset-resolver.js";
 import { readObject } from "../lib/objects.js";
+import { listInvalidOrgChainDescendantIds } from "../services/agent-invokability.js";
 
 const RUN_LOG_DEFAULT_LIMIT_BYTES = 256_000;
 const RUN_LOG_MAX_LIMIT_BYTES = 1024 * 1024;
@@ -2918,7 +2919,21 @@ export function agentRoutes(
       return;
     }
 
-    await heartbeat.cancelActiveForAgent(id);
+    const companyAgentRows = await db
+      .select({
+        id: agentsTable.id,
+        companyId: agentsTable.companyId,
+        name: agentsTable.name,
+        reportsTo: agentsTable.reportsTo,
+        status: agentsTable.status,
+      })
+      .from(agentsTable)
+      .where(eq(agentsTable.companyId, agent.companyId));
+    const invalidOrgChainDescendantIds = listInvalidOrgChainDescendantIds(id, companyAgentRows);
+    const cancellation = await heartbeat.cancelInvocationsForAgents(
+      [id, ...invalidOrgChainDescendantIds],
+      "Cancelled because the agent was terminated or became invalid-org-chain under a terminated manager",
+    );
 
     await logActivity(db, {
       companyId: agent.companyId,
@@ -2927,6 +2942,18 @@ export function agentRoutes(
       action: "agent.terminated",
       entityType: "agent",
       entityId: agent.id,
+      details: {
+        invalidOrgChain: {
+          descendantCount: invalidOrgChainDescendantIds.length,
+          descendantIds: invalidOrgChainDescendantIds,
+          state: invalidOrgChainDescendantIds.length > 0 ? "descendants_invalid_under_terminated_manager" : "none",
+        },
+        cancellation: {
+          agentIds: cancellation.agentIds,
+          runsCancelled: cancellation.runsCancelled,
+          wakeupsCancelled: cancellation.wakeupsCancelled,
+        },
+      },
     });
 
     res.json(agent);

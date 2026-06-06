@@ -36,6 +36,7 @@ import { instanceSettingsService } from "../instance-settings.js";
 import { issueRecoveryActionService } from "../issue-recovery-actions.js";
 import { issueTreeControlService } from "../issue-tree-control.js";
 import { issueService } from "../issues.js";
+import { evaluateAgentInvokabilityFromDb } from "../agent-invokability.js";
 import { getRunLogStore } from "../run-log-store.js";
 import {
   DEFAULT_MAX_SUCCESSFUL_RUN_HANDOFF_ATTEMPTS,
@@ -327,10 +328,6 @@ function unwrapDatabaseConflictError(error: unknown) {
   };
 }
 
-function isAgentInvokable(agent: typeof agents.$inferSelect | null | undefined) {
-  return Boolean(agent && !["paused", "terminated", "pending_approval"].includes(agent.status));
-}
-
 function isStrandedIssueRecoveryIssue(issue: Pick<typeof issues.$inferSelect, "originKind">) {
   return isStrandedIssueRecoveryOriginKind(issue.originKind);
 }
@@ -464,6 +461,10 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
 
   async function getAgent(agentId: string) {
     return db.select().from(agents).where(eq(agents.id, agentId)).then((rows) => rows[0] ?? null);
+  }
+
+  async function isAgentInvokable(agent: typeof agents.$inferSelect | null | undefined) {
+    return (await evaluateAgentInvokabilityFromDb(db, agent)).invokable;
   }
 
   async function getLatestIssueRun(companyId: string, issueId: string): Promise<LatestIssueRun> {
@@ -697,7 +698,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         continue;
       }
       const creatorAgent = await getAgent(creatorAgentId);
-      if (!creatorAgent || creatorAgent.companyId !== candidate.companyId || !isAgentInvokable(creatorAgent)) {
+      if (!creatorAgent || creatorAgent.companyId !== candidate.companyId || !(await isAgentInvokable(creatorAgent))) {
         skipped += 1;
         continue;
       }
@@ -1249,7 +1250,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         issueId: input.sourceIssue?.id ?? null,
         projectId: input.sourceIssue?.projectId ?? null,
       });
-      if (isAgentInvokable(candidate) && !budgetBlock) return candidate.id;
+      if ((await isAgentInvokable(candidate)) && !budgetBlock) return candidate.id;
     }
 
     return null;
@@ -1872,7 +1873,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         issueId: issue.id,
         projectId: issue.projectId,
       });
-      if (isAgentInvokable(candidate) && !budgetBlock) return candidate.id;
+      if ((await isAgentInvokable(candidate)) && !budgetBlock) return candidate.id;
     }
 
     return null;
@@ -2486,7 +2487,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
       }
 
       const agent = await getAgent(agentId);
-      if (!agent || agent.companyId !== issue.companyId || !isAgentInvokable(agent)) {
+      if (!agent || agent.companyId !== issue.companyId || !(await isAgentInvokable(agent))) {
         result.skipped += 1;
         continue;
       }

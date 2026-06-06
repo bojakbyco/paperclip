@@ -156,6 +156,11 @@ import { recoveryService } from "./recovery/service.js";
 import { productivityReviewService } from "./productivity-review.js";
 import { withAgentStartLock } from "./agent-start-lock.js";
 import {
+  evaluateAgentInvokability,
+  evaluateAgentInvokabilityFromDb,
+  shouldCancelRunsForNonInvokableAgent,
+} from "./agent-invokability.js";
+import {
   redactQuarantinedBodyForHigherTrust,
   sanitizeQuarantinedCommentForHigherTrust,
 } from "./source-trust.js";
@@ -3061,6 +3066,10 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       .then((rows) => rows[0] ?? null);
   }
 
+  async function getAgentInvokability(agent: typeof agents.$inferSelect | null | undefined) {
+    return evaluateAgentInvokabilityFromDb(db, agent);
+  }
+
   async function getRun(runId: string, opts?: { unsafeFullResultJson?: boolean }) {
     const safeForLegacyEncoding = !opts?.unsafeFullResultJson && await hasUnsafeTextProjectionDatabase();
     return db
@@ -5146,6 +5155,22 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     agent: typeof agents.$inferSelect,
     issueId: string,
   ) {
+    const invokability = await getAgentInvokability(agent);
+    if (!invokability.invokable) {
+      await appendRunEvent(run, await nextRunEventSeq(run.id), {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "warn",
+        message: "Missing-comment retry suppressed because the agent is not invokable",
+        payload: {
+          reason: invokability.reason,
+          invalidOrgChain: invokability.invalidOrgChain,
+          ...invokability.details,
+        },
+      });
+      return null;
+    }
+
     const contextSnapshot = parseObject(run.contextSnapshot);
     const taskKey = deriveTaskKeyWithHeartbeatFallback(contextSnapshot, null);
     const sessionBefore = await resolveSessionBeforeForWakeup(agent, taskKey);
@@ -5366,6 +5391,23 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     agent: typeof agents.$inferSelect,
     now: Date,
   ) {
+    const invokability = await getAgentInvokability(agent);
+    if (!invokability.invokable) {
+      await appendRunEvent(run, await nextRunEventSeq(run.id), {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "warn",
+        message: "Process-loss retry suppressed because the agent is not invokable",
+        payload: {
+          reason: invokability.reason,
+          invalidOrgChain: invokability.invalidOrgChain,
+          ...invokability.details,
+        },
+      });
+      await releaseIssueExecutionAndPromote(run);
+      return null;
+    }
+
     const contextSnapshot = parseObject(run.contextSnapshot);
     const issueId = readNonEmptyString(contextSnapshot.issueId);
     const taskKey = deriveTaskKeyWithHeartbeatFallback(contextSnapshot, null);
@@ -5516,15 +5558,16 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       };
     }
 
-    if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") {
+    const agentInvokability = await getAgentInvokability(agent);
+    if (!agentInvokability.invokable) {
       return {
         allowed: false,
         reason: "Scheduled retry suppressed because the agent is not invokable",
         errorCode: "agent_not_invokable",
         issueId,
         details: {
-          agentId: agent.id,
-          agentStatus: agent.status,
+          ...agentInvokability.details,
+          invalidOrgChain: agentInvokability.invalidOrgChain,
         },
       };
     }
@@ -5896,6 +5939,33 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         maxAttempts,
       };
     }
+
+    const invokability = await getAgentInvokability(agent);
+    if (!invokability.invokable) {
+      const contextSnapshot = parseObject(run.contextSnapshot);
+      const issueId = readNonEmptyString(contextSnapshot.issueId);
+      await appendRunEvent(run, await nextRunEventSeq(run.id), {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "warn",
+        message: "Scheduled retry suppressed because the agent is not invokable",
+        payload: {
+          retryReason,
+          scheduledRetryAttempt: nextAttempt,
+          maxAttempts,
+          reason: invokability.reason,
+          invalidOrgChain: invokability.invalidOrgChain,
+          ...invokability.details,
+        },
+      });
+      return {
+        outcome: "not_scheduled" as const,
+        reason: "Scheduled retry suppressed because the agent is not invokable",
+        errorCode: "agent_not_invokable" as const,
+        issueId,
+      };
+    }
+
     const schedule =
       transientRetryNotBefore && transientRetryNotBefore.getTime() > baseSchedule.dueAt.getTime()
         ? {
@@ -6521,8 +6591,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       await cancelRunInternal(run.id, "Cancelled because the agent no longer exists");
       return null;
     }
-    if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") {
-      await cancelRunInternal(run.id, "Cancelled because the agent is not invokable");
+    const invokability = await getAgentInvokability(agent);
+    if (!invokability.invokable) {
+      await cancelRunInternal(run.id, `Cancelled because the agent is not invokable: ${invokability.reason}`);
       return null;
     }
 
@@ -7433,7 +7504,11 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return withAgentStartLock(agentId, async () => {
       const agent = await getAgent(agentId);
       if (!agent) return [];
-      if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") {
+      const invokability = await getAgentInvokability(agent);
+      if (!invokability.invokable) {
+        if (shouldCancelRunsForNonInvokableAgent(invokability)) {
+          await cancelActiveForAgentInternal(agentId, `Cancelled because the agent is not invokable: ${invokability.reason}`);
+        }
         return [];
       }
       const policy = parseHeartbeatPolicy(agent);
@@ -9278,13 +9353,24 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
           .where(eq(agents.id, deferred.agentId))
           .then((rows) => rows[0] ?? null);
 
-        if (
-          !deferredAgent ||
-          deferredAgent.companyId !== issue.companyId ||
-          deferredAgent.status === "paused" ||
-          deferredAgent.status === "terminated" ||
-          deferredAgent.status === "pending_approval"
-        ) {
+        const companyAgents = deferredAgent
+          ? await tx
+            .select({
+              id: agents.id,
+              companyId: agents.companyId,
+              name: agents.name,
+              reportsTo: agents.reportsTo,
+              status: agents.status,
+            })
+            .from(agents)
+            .where(eq(agents.companyId, issue.companyId))
+          : [];
+        const deferredInvokability =
+          deferredAgent?.companyId === issue.companyId
+            ? evaluateAgentInvokability(deferredAgent, companyAgents)
+            : evaluateAgentInvokability(null, companyAgents);
+
+        if (!deferredAgent || deferredAgent.companyId !== issue.companyId || !deferredInvokability.invokable) {
           await tx
             .update(agentWakeupRequests)
             .set({
@@ -9767,12 +9853,19 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       });
     }
 
-    if (
-      agent.status === "paused" ||
-      agent.status === "terminated" ||
-      agent.status === "pending_approval"
-    ) {
-      throw conflict("Agent is not invokable in its current state", { status: agent.status });
+    const invokability = await getAgentInvokability(agent);
+    if (!invokability.invokable) {
+      if (opts.requestedByActorType !== "user") {
+        await writeSkippedRequest("agent.not_invokable", {
+          error: invokability.message,
+        });
+      }
+      throw conflict(invokability.message, {
+        status: agent.status,
+        reason: invokability.reason,
+        invalidOrgChain: invokability.invalidOrgChain,
+        ...invokability.details,
+      });
     }
 
     const policy = parseHeartbeatPolicy(agent);
@@ -10576,6 +10669,52 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     return runs.length;
   }
 
+  async function cancelPendingWakeupsForAgentsInternal(agentIds: string[], reason: string) {
+    const uniqueAgentIds = [...new Set(agentIds)].filter((agentId) => agentId.length > 0);
+    if (uniqueAgentIds.length === 0) return 0;
+
+    const now = new Date();
+    const wakeupIds = await db
+      .select({ id: agentWakeupRequests.id })
+      .from(agentWakeupRequests)
+      .where(
+        and(
+          inArray(agentWakeupRequests.agentId, uniqueAgentIds),
+          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
+          sql`${agentWakeupRequests.runId} is null`,
+        ),
+      )
+      .then((rows) => rows.map((row) => row.id));
+
+    if (wakeupIds.length === 0) return 0;
+
+    await db
+      .update(agentWakeupRequests)
+      .set({
+        status: "cancelled",
+        finishedAt: now,
+        error: reason,
+        updatedAt: now,
+      })
+      .where(inArray(agentWakeupRequests.id, wakeupIds));
+
+    return wakeupIds.length;
+  }
+
+  async function cancelInvocationsForAgentsInternal(agentIds: string[], reason: string) {
+    const uniqueAgentIds = [...new Set(agentIds)].filter((agentId) => agentId.length > 0);
+    let runsCancelled = 0;
+    for (const agentId of uniqueAgentIds) {
+      runsCancelled += await cancelActiveForAgentInternal(agentId, reason);
+    }
+    const wakeupsCancelled = await cancelPendingWakeupsForAgentsInternal(uniqueAgentIds, reason);
+    return {
+      agentIds: uniqueAgentIds,
+      runsCancelled,
+      wakeupsCancelled,
+    };
+  }
+
   async function cancelBudgetScopeWork(scope: BudgetEnforcementScope) {
     if (scope.scopeType === "agent") {
       await cancelActiveForAgentInternal(scope.scopeId, "Cancelled due to budget pause");
@@ -10882,7 +11021,17 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
       let skipped = 0;
 
       for (const agent of allAgents) {
-        if (agent.status === "paused" || agent.status === "terminated" || agent.status === "pending_approval") continue;
+        const companyAgents = allAgents
+          .filter((candidate) => candidate.companyId === agent.companyId)
+          .map((candidate) => ({
+            id: candidate.id,
+            companyId: candidate.companyId,
+            name: candidate.name,
+            reportsTo: candidate.reportsTo,
+            status: candidate.status,
+          }));
+        const invokability = evaluateAgentInvokability(agent, companyAgents);
+        if (!invokability.invokable) continue;
         const policy = parseHeartbeatPolicy(agent);
         if (!policy.enabled || policy.intervalSec <= 0) continue;
 
@@ -10919,6 +11068,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     cancelRun: (runId: string, reason?: string) => cancelRunInternal(runId, reason),
 
     cancelActiveForAgent: (agentId: string, reason?: string) => cancelActiveForAgentInternal(agentId, reason),
+
+    cancelInvocationsForAgents: (agentIds: string[], reason: string) =>
+      cancelInvocationsForAgentsInternal(agentIds, reason),
 
     cancelBudgetScopeWork,
 
