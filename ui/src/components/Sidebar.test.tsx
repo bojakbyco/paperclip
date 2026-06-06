@@ -167,19 +167,19 @@ describe("Sidebar", () => {
     });
   });
 
-  it("streamlined (flag ON): New Task button, Tasks label, top-level Projects link, no per-project collapsible", async () => {
+  it("streamlined (flag ON): keeps Issue wording, top-level Projects link, no per-project collapsible", async () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableIsolatedWorkspaces: false,
       enableStreamlinedLeftNavigation: true,
     });
     const root = await renderSidebar();
 
-    expect(container.textContent).toContain("New Task");
-    expect(container.textContent).not.toContain("New Issue");
+    expect(container.textContent).toContain("New Issue");
+    expect(container.textContent).not.toContain("New Task");
 
     const navLabels = [...container.querySelectorAll("nav a")].map((a) => a.textContent?.trim());
-    expect(navLabels).toContain("Tasks");
-    expect(navLabels).not.toContain("Issues");
+    expect(navLabels).toContain("Issues");
+    expect(navLabels).not.toContain("Tasks");
 
     const projectsLink = [...container.querySelectorAll("nav a")].find((a) => a.textContent?.trim() === "Projects");
     expect(projectsLink?.getAttribute("href")).toBe("/projects");
