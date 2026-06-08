@@ -212,6 +212,11 @@ export function Layout() {
   // effective `peeking` to desktop + collapsed + hover-capable pointers, so
   // these handlers are inert otherwise.
   const peekTimer = useRef<number | null>(null);
+  // Whether the pointer is currently over the peek panel. Used to keep the peek
+  // open across focus changes (e.g. navigation steals focus to <main>) as long as
+  // the user is still hovering — it should only close when they actually mouse off
+  // (PAP-10676).
+  const pointerInsidePanel = useRef(false);
   const clearPeekTimer = useCallback(() => {
     if (peekTimer.current !== null) {
       window.clearTimeout(peekTimer.current);
@@ -230,15 +235,29 @@ export function Layout() {
     clearPeekTimer();
     peekTimer.current = window.setTimeout(() => setPeeking(false), 120);
   }, [clearPeekTimer, setPeeking]);
+  const handlePanelPointerEnter = useCallback(() => {
+    pointerInsidePanel.current = true;
+    openPeek();
+  }, [openPeek]);
+  const handlePanelPointerLeave = useCallback(() => {
+    pointerInsidePanel.current = false;
+    closePeek();
+  }, [closePeek]);
+  // Close on focus leaving the panel only when the pointer isn't hovering it.
+  // Clicking a rail/peek nav item moves focus to <main> on navigation; if the
+  // mouse is still over the flyout we keep it open until the pointer leaves.
+  const handlePanelBlur = useCallback(() => {
+    if (pointerInsidePanel.current) return;
+    closePeek();
+  }, [closePeek]);
 
   // Tidy up any pending peek timer on unmount.
   useEffect(() => clearPeekTimer, [clearPeekTimer]);
 
-  // Close peek on navigation so it never lingers over a freshly routed page.
-  useEffect(() => {
-    clearPeekTimer();
-    setPeeking(false);
-  }, [location.pathname, clearPeekTimer, setPeeking]);
+  // Intentionally do NOT close the peek on navigation: clicking a nav item means
+  // the pointer is still over the flyout, so it should stay open until the user
+  // actually mouses off (handled by onPanelMouseLeave) or blurs out / hits Escape
+  // (PAP-10676). Auto-closing here made the sidebar collapse on every page change.
 
   // Escape closes an open peek without trapping the pointer.
   useEffect(() => {
@@ -435,10 +454,10 @@ export function Layout() {
             collapsed={collapsed}
             peeking={peeking}
             resizable
-            onPanelMouseEnter={collapsed ? openPeek : undefined}
-            onPanelMouseLeave={collapsed ? closePeek : undefined}
+            onPanelMouseEnter={collapsed ? handlePanelPointerEnter : undefined}
+            onPanelMouseLeave={collapsed ? handlePanelPointerLeave : undefined}
             onPanelFocusCapture={collapsed ? openPeekImmediate : undefined}
-            onPanelBlurCapture={collapsed ? closePeek : undefined}
+            onPanelBlurCapture={collapsed ? handlePanelBlur : undefined}
           >
             <div className="flex flex-1 min-h-0">
               {isCompanySettingsRoute ? (

@@ -72,47 +72,56 @@ export function Sidebar() {
       {/* Top bar: Company name (bold) + Search — aligned with top sections (no visible border) */}
       <div className="flex items-center gap-1 px-3 h-12 shrink-0">
         <SidebarCompanyMenu />
-        <Button
-          asChild
-          variant="ghost"
-          size="icon-sm"
-          className="text-muted-foreground shrink-0"
-          aria-label="Open search"
-          title="Open search"
-        >
-          <NavLink to="/search">
-            <Search className="h-4 w-4" />
-          </NavLink>
-        </Button>
-        {/* Desktop-only collapse/expand affordance. While peeking (hover flyout
-            over the collapsed rail) it becomes a Pin that promotes the peek to a
-            pinned-expanded sidebar; otherwise it toggles the pinned rail. Mobile
-            uses the off-canvas drawer, so this control is hidden there. */}
-        {!isMobile ? (
-          peeking ? (
+        {/* In the collapsed rail the search/toggle controls don't fit beside the
+            logo — keeping them would overflow the 64px rail and squeeze the logo
+            out of alignment with the icon column below it (PAP-10676). They return
+            as soon as the panel is expanded (pinned) or peeking. Expansion in the
+            rail is still reachable via hover-peek + Pin and Cmd/Ctrl+B. */}
+        {!rail ? (
+          <>
             <Button
+              asChild
               variant="ghost"
               size="icon-sm"
               className="text-muted-foreground shrink-0"
-              aria-label="Keep sidebar expanded"
-              title="Keep sidebar expanded"
-              onClick={() => setCollapsed(false)}
+              aria-label="Open search"
+              title="Open search"
             >
-              <Pin className="h-4 w-4" />
+              <NavLink to="/search">
+                <Search className="h-4 w-4" />
+              </NavLink>
             </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="text-muted-foreground shrink-0"
-              aria-expanded={!collapsed}
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              onClick={() => toggleCollapsed()}
-            >
-              {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-            </Button>
-          )
+            {/* Desktop-only collapse/expand affordance. While peeking (hover flyout
+                over the collapsed rail) it becomes a Pin that promotes the peek to a
+                pinned-expanded sidebar; otherwise it toggles the pinned rail. Mobile
+                uses the off-canvas drawer, so this control is hidden there. */}
+            {!isMobile ? (
+              peeking ? (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground shrink-0"
+                  aria-label="Keep sidebar expanded"
+                  title="Keep sidebar expanded"
+                  onClick={() => setCollapsed(false)}
+                >
+                  <Pin className="h-4 w-4" />
+                </Button>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-muted-foreground shrink-0"
+                  aria-expanded={!collapsed}
+                  aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                  onClick={() => toggleCollapsed()}
+                >
+                  {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+                </Button>
+              )
+            ) : null}
+          </>
         ) : null}
       </div>
 

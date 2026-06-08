@@ -225,7 +225,12 @@ export function SidebarCompanyMenu({ open: controlledOpen, onOpenChange }: Sideb
       <DropdownMenuTrigger asChild>
         <Button
           variant="ghost"
-          className="h-9 flex-1 justify-start gap-2 px-2 text-left"
+          // `px-3` (not px-2) so the logo's left edge lines up with the nav icon
+          // column (nav px-3 + item px-3) and, crucially, stays put between states:
+          // the Button's default size adds `has-[>svg]:px-3`, so with the chevron
+          // svg present (expanded) it was already 12px but without it (rail) it fell
+          // back to 8px — a 4px horizontal jump on collapse (PAP-10676).
+          className="h-9 flex-1 justify-start gap-2 px-3 text-left"
           aria-label={selectedCompany ? `Open ${selectedCompany.name} workspace switcher` : "Open workspace switcher"}
         >
           <span className="flex min-w-0 flex-1 items-center gap-2">

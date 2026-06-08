@@ -315,19 +315,20 @@ describe("Sidebar", () => {
     });
   });
 
-  it("header toggle expands a collapsed rail", async () => {
+  it("keeps the collapsed rail top bar to just the company logo (no clipped search/toggle)", async () => {
+    // In the narrow rail the search/toggle controls don't fit beside the logo and
+    // would overflow/clip, shoving the logo out of the icon column (PAP-10676), so
+    // they are dropped in the rail. Expansion stays reachable via hover-peek + Pin
+    // and Cmd/Ctrl+B. The full controls return as soon as the panel is expanded or
+    // peeking (covered by the other top-bar tests).
     mockSidebar.collapsed = true;
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
     const root = await renderSidebar();
 
-    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="Expand sidebar"]');
-    expect(toggle).not.toBeNull();
-    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
-
-    act(() => {
-      toggle?.click();
-    });
-    expect(mockSidebar.toggleCollapsed).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('button[aria-label="Expand sidebar"]')).toBeNull();
+    expect(container.querySelector('a[aria-label="Open search"]')).toBeNull();
+    // The company menu (workspace switcher / logo) is still present in the rail.
+    expect(container.textContent).toContain("Company menu");
 
     flushSync(() => {
       root.unmount();
