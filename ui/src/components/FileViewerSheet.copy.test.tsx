@@ -36,6 +36,12 @@ vi.mock("@/components/WorkspaceFileBrowser", () => ({
   WorkspaceFileBrowser: () => null,
 }));
 
+vi.mock("@/components/WorkspaceFileMarkdownBody", () => ({
+  WorkspaceFileMarkdownBody: ({ children }: { children: string }) => (
+    <div data-testid="mock-rendered-markdown">Rendered Markdown: {children}</div>
+  ),
+}));
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -127,6 +133,18 @@ describe("FileViewerSheet copy actions", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
   }
 
+  async function clickButtonText(label: string) {
+    const button = Array.from(document.body.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent?.trim().toLowerCase() === label.toLowerCase(),
+    ) as HTMLButtonElement | undefined;
+    expect(button).toBeDefined();
+    flushSync(() => {
+      button!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    });
+    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
   it("copies file contents and shows confirmation", async () => {
     renderSheet();
 
@@ -162,5 +180,39 @@ describe("FileViewerSheet copy actions", () => {
     expect(browserPane?.className).not.toContain("rounded");
     expect(previewPane?.className).not.toContain("border");
     expect(previewPane?.className).not.toContain("rounded");
+  });
+
+  it("switches Markdown files from raw source to rendered Markdown", async () => {
+    useQueryMock.mockImplementation((options: { queryKey?: readonly unknown[] }) => {
+      const key = JSON.stringify(options.queryKey ?? []);
+      if (key.includes('"content"')) {
+        return ok({
+          ...content,
+          resource: {
+            ...resolvedResource,
+            title: "launch.md",
+            displayPath: "docs/launch.md",
+            contentType: "text/markdown; charset=utf-8",
+          },
+          content: { encoding: "utf8", data: "# Launch note\n\nRendered body" },
+        });
+      }
+      return ok({
+        ...resolvedResource,
+        title: "launch.md",
+        displayPath: "docs/launch.md",
+        contentType: "text/markdown; charset=utf-8",
+      });
+    });
+    renderSheet();
+
+    expect(document.body.querySelector('[aria-label="launch.md source"]')).not.toBeNull();
+    expect(document.body.querySelector('[aria-label="launch.md rendered Markdown"]')).toBeNull();
+
+    await clickButtonText("Rendered");
+
+    expect(document.body.querySelector('[aria-label="launch.md source"]')).toBeNull();
+    expect(document.body.querySelector('[aria-label="launch.md rendered Markdown"]')).not.toBeNull();
+    expect(document.body.textContent).toContain("Rendered Markdown: # Launch note");
   });
 });

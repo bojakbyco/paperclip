@@ -114,6 +114,37 @@ describe("FileContentViewer", () => {
     expect(markup).toContain("controls");
     expect(markup).toContain("data:video/mp4;base64,AAAA");
   });
+
+  it("shows a raw/rendered toggle for Markdown files and defaults to raw source", () => {
+    const markup = renderToStaticMarkup(
+      <FileContentViewer
+        content={content({
+          resource: {
+            ...content().resource,
+            title: "README.md",
+            displayPath: "docs/README.md",
+            contentType: "text/markdown; charset=utf-8",
+          },
+          content: {
+            encoding: "utf8",
+            data: "# Heading\n\nBody",
+          },
+        })}
+        highlightedLine={null}
+      />,
+    );
+
+    expect(markup).toContain("Markdown preview mode");
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain("README.md source");
+  });
+
+  it("does not show the Markdown toggle for non-Markdown text files", () => {
+    const markup = renderToStaticMarkup(<FileContentViewer content={content()} highlightedLine={null} />);
+
+    expect(markup).not.toContain("Markdown preview mode");
+    expect(markup).toContain("notes.txt source");
+  });
 });
 
 describe("FileViewerMetadataRow", () => {

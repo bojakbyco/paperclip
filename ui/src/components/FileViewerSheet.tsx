@@ -43,6 +43,7 @@ import {
   type FileViewerUrlState,
 } from "@/context/FileViewerContext";
 import { WorkspaceFileBrowser } from "@/components/WorkspaceFileBrowser";
+import { WorkspaceFileMarkdownBody } from "@/components/WorkspaceFileMarkdownBody";
 import type {
   ResolvedWorkspaceResource,
   WorkspaceFileContent,
@@ -103,6 +104,13 @@ function middleTruncatePath(path: string, maxLen = 80): string {
   const head = path.slice(0, Math.floor(maxLen / 2) - 1);
   const tail = path.slice(path.length - (maxLen - head.length - 1));
   return `${head}…${tail}`;
+}
+
+function isMarkdownResource(resource: ResolvedWorkspaceResource): boolean {
+  const contentType = resource.contentType?.toLowerCase() ?? "";
+  if (contentType.includes("markdown")) return true;
+  const path = (resource.displayPath || resource.title).toLowerCase();
+  return /\.(md|markdown|mdown|mkdn|mkd)$/.test(path);
 }
 
 async function copyTextWithFallback(text: string) {
@@ -246,8 +254,12 @@ interface FileContentViewerProps {
   onLoaded?: (summary: string) => void;
 }
 
+type MarkdownPreviewMode = "raw" | "rendered";
+
 export function FileContentViewer({ content, highlightedLine, onLoaded }: FileContentViewerProps) {
   const { resource } = content;
+  const isMarkdown = resource.previewKind === "text" && content.content.encoding === "utf8" && isMarkdownResource(resource);
+  const [markdownMode, setMarkdownMode] = useState<MarkdownPreviewMode>("raw");
   const lines = useMemo(() => {
     if (resource.previewKind === "text") {
       return splitContentIntoLines(content.content.data);
@@ -259,14 +271,19 @@ export function FileContentViewer({ content, highlightedLine, onLoaded }: FileCo
   const highlightedLineRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setMarkdownMode("raw");
+  }, [resource.displayPath, resource.title, resource.contentType]);
+
+  useEffect(() => {
     if (!lines) return;
     onLoaded?.(`File loaded, ${lines.length} ${lines.length === 1 ? "line" : "lines"}.`);
   }, [lines, onLoaded]);
 
   useEffect(() => {
+    if (markdownMode !== "raw") return;
     if (!highlightedLine || !highlightedLineRef.current) return;
     highlightedLineRef.current.scrollIntoView({ block: "center", behavior: "auto" });
-  }, [highlightedLine]);
+  }, [highlightedLine, markdownMode]);
 
   if (resource.previewKind === "image") {
     const dataUrl = content.content.encoding === "base64"
@@ -329,7 +346,7 @@ export function FileContentViewer({ content, highlightedLine, onLoaded }: FileCo
 
   const gutterWidth = `calc(${Math.max(4, String(lines.length).length)}ch + 2rem)`;
 
-  return (
+  const rawSourceView = (
     <div
       ref={codeScrollRef}
       role="region"
@@ -368,6 +385,56 @@ export function FileContentViewer({ content, highlightedLine, onLoaded }: FileCo
           );
         })}
       </pre>
+    </div>
+  );
+
+  if (!isMarkdown) {
+    return rawSourceView;
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-10 shrink-0 items-center justify-between gap-2 border-b border-border bg-background/80 px-3 py-2">
+        <div
+          role="group"
+          aria-label="Markdown preview mode"
+          className="inline-flex rounded-md border border-border bg-muted/40 p-0.5"
+        >
+          {(["raw", "rendered"] as const).map((mode) => {
+            const selected = markdownMode === mode;
+            return (
+              <Button
+                key={mode}
+                type="button"
+                variant={selected ? "secondary" : "ghost"}
+                size="sm"
+                aria-pressed={selected}
+                onClick={() => setMarkdownMode(mode)}
+                className={cn(
+                  "h-6 rounded-sm px-2 text-xs capitalize",
+                  selected ? "shadow-none" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {mode}
+              </Button>
+            );
+          })}
+        </div>
+      </div>
+      {markdownMode === "raw" ? (
+        rawSourceView
+      ) : (
+        <div
+          role="region"
+          aria-label={`${resource.title} rendered Markdown`}
+          tabIndex={0}
+          className="flex-1 overflow-auto bg-background p-5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+        >
+          <WorkspaceFileMarkdownBody softBreaks={false}>
+            {content.content.data}
+          </WorkspaceFileMarkdownBody>
+        </div>
+      )}
     </div>
   );
 }
