@@ -601,6 +601,7 @@ const BOARD_ONLY_OPERATIONS = new Set([
   "GET /api/companies/{companyId}/tools/applications",
   "POST /api/companies/{companyId}/tools/applications",
   "PATCH /api/tool-applications/{applicationId}",
+  "DELETE /api/tool-applications/{applicationId}",
   "GET /api/companies/{companyId}/tools/connections",
   "POST /api/companies/{companyId}/tools/connections",
   "GET /api/tool-connections/{connectionId}",
@@ -4543,6 +4544,13 @@ registerCurrentRoute({
   tags: ["tool-access"],
   summary: "Update a tool application",
   body: updateToolApplicationSchema,
+});
+
+registerCurrentRoute({
+  method: "delete",
+  path: "/api/tool-applications/{applicationId}",
+  tags: ["tool-access"],
+  summary: "Delete a tool application",
 });
 
 registerCurrentRoute({
