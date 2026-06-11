@@ -1235,12 +1235,14 @@ function NewSkillWizard({
 }) {
   const [step, setStep] = useState(0);
   const [draft, setDraft] = useState<SkillCreateDraft>(initialDraft);
+  const [slugDirty, setSlugDirty] = useState(initialDraft.slug.trim().length > 0);
   const categoryDraft = draft.categories.join(", ");
   const steps = ["Basics", "Design", "Content", "Review"];
 
   useEffect(() => {
     setStep(0);
     setDraft(initialDraft);
+    setSlugDirty(initialDraft.slug.trim().length > 0);
   }, [initialDraft]);
 
   function patchDraft(patch: Partial<SkillCreateDraft>) {
@@ -1300,7 +1302,7 @@ function NewSkillWizard({
               const nextName = event.target.value;
               patchDraft({
                 name: nextName,
-                slug: draft.slug ? draft.slug : normalizeSkillDraftSlug(nextName),
+                slug: slugDirty ? draft.slug : normalizeSkillDraftSlug(nextName),
                 markdown: draft.markdown === defaultSkillMarkdown(draft.name, draft.tagline)
                   ? defaultSkillMarkdown(nextName, draft.tagline)
                   : draft.markdown,
@@ -1311,7 +1313,11 @@ function NewSkillWizard({
           />
           <Input
             value={draft.slug}
-            onChange={(event) => patchDraft({ slug: normalizeSkillDraftSlug(event.target.value) })}
+            onChange={(event) => {
+              const nextSlug = normalizeSkillDraftSlug(event.target.value);
+              setSlugDirty(nextSlug.length > 0);
+              patchDraft({ slug: nextSlug });
+            }}
             placeholder="skill-shortname"
             className="h-9 font-mono"
           />
@@ -2642,6 +2648,9 @@ function SkillDetailPage({
   const currentPin = shortRef(skill.sourceRef);
   const latestPin = shortRef(updateStatus?.latestRef);
   const selectedVersion = versions.find((version) => version.id === currentVersionSelection(skill)) ?? null;
+  const subtitleText = skill.tagline || skill.description
+    ? cardDescriptionText(skill.tagline ?? skill.description)
+    : source.label;
 
   function renderFilesBody() {
     return (
@@ -2941,7 +2950,7 @@ function SkillDetailPage({
                 <h1 className="truncate text-2xl font-semibold">{detail.name}</h1>
                 <p className="mt-1 flex min-w-0 flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   <SourceIcon className="h-3.5 w-3.5" />
-                  <span className="truncate">{detail.tagline ?? detail.description ?? source.label}</span>
+                  <span className="truncate">{subtitleText}</span>
                 </p>
               </div>
             </div>
@@ -4102,9 +4111,15 @@ export function CompanySkills() {
     const targetSet = new Set(nextAgentIds);
     const current = (activeDetail.usedByAgents ?? []).map((entry) => entry.id);
     const currentSet = new Set(current);
+    const currentVersionByAgent = new Map(
+      (activeDetail.usedByAgents ?? []).map((entry) => [entry.id, entry.versionId ?? null]),
+    );
     const toAdd = nextAgentIds.filter((id) => !currentSet.has(id));
     const toRemove = current.filter((id) => !targetSet.has(id));
-    const affected = new Set<string>([...toAdd, ...toRemove]);
+    const toUpdateVersion = nextAgentIds.filter((id) =>
+      currentSet.has(id) && (currentVersionByAgent.get(id) ?? null) !== versionId,
+    );
+    const affected = new Set<string>([...toAdd, ...toRemove, ...toUpdateVersion]);
     if (affected.size === 0) {
       setAttachPopoverOpen(false);
       return;
