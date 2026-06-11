@@ -65,6 +65,13 @@ test.describe("Conference Room typing intro after onboarding wizard", () => {
       });
     });
 
+    // New-NUX surfaces are flag-gated default-OFF (PAP-136/137/138): turn the
+    // experimental flag on for this throwaway instance before driving them.
+    const flagRes = await page.request.patch("/api/instance/settings/experimental", {
+      data: { enableConferenceRoomChat: true },
+    });
+    expect(flagRes.ok()).toBe(true);
+
     await page.goto("/onboarding");
 
     // Launcher card path (existing companies) — enter the wizard if the

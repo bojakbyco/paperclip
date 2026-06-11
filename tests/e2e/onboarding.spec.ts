@@ -31,51 +31,49 @@ test.describe("Onboarding wizard", () => {
     const pageErrors: string[] = [];
     page.on("pageerror", (err) => pageErrors.push(err.message));
 
+    // New-NUX surfaces are flag-gated default-OFF (PAP-136/137/138): turn the
+    // experimental flag on for this throwaway instance before driving them.
+    const flagRes = await page.request.patch("/api/instance/settings/experimental", {
+      data: { enableConferenceRoomChat: true },
+    });
+    expect(flagRes.ok()).toBe(true);
+
     await page.goto("/onboarding");
 
-    // The wizard may open directly on the create flow (step 1a) when launched
-    // from the onboarding route; "← Back to start" returns to the front door.
+    // The wizard may open on a launcher card or directly on the capsule
+    // wizard; the front door (step 0) requires a click into the create path.
     const startBtn = page.getByRole("button", {
       name: /Start Onboarding|New Company|Add Agent/,
     });
     if (await startBtn.count()) {
       await startBtn.first().click();
     }
-
-    const nameHeading = page.getByRole("heading", { name: "Name your company" });
-    await expect(nameHeading).toBeVisible({ timeout: 15_000 });
-
-    const backToStart = page.getByRole("button", { name: /Back to start/ });
-    if (await backToStart.count()) {
-      await backToStart.first().click();
-      await expect(
-        page.getByRole("heading", { name: "Welcome to Paperclip" }),
-      ).toBeVisible({ timeout: 10_000 });
-      await page.getByRole("button", { name: /Create a new company/ }).click();
+    const createCard = page.getByRole("button", { name: /Build a new team/ });
+    if (await createCard.count()) {
+      await createCard.first().click();
     }
 
-    // Step 1a — Name your company.
-    await expect(nameHeading).toBeVisible({ timeout: 10_000 });
-    await page.locator('input[placeholder="Acme Corp"]').fill(COMPANY_NAME);
-    await page.getByRole("button", { name: "Next" }).click();
+    // Step 1 — Name your team.
+    await expect(
+      page.getByRole("heading", { name: "Name your team" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await page.getByPlaceholder("Acme Corp").fill(COMPANY_NAME);
+    await page.getByRole("button", { name: /^Next/ }).click();
 
-    // Step 1b — Define your mission (direct entry is the default path).
+    // Step 2 — Define your mission (direct entry is the default path).
     await expect(
       page.getByRole("heading", { name: "Define your mission" }),
     ).toBeVisible({ timeout: 10_000 });
-    await page.locator("textarea").first().fill(MISSION);
+    await page
+      .getByPlaceholder("What is your team trying to achieve?")
+      .fill(MISSION);
 
     // "Confirm mission" creates the company + a company-level goal, then
-    // advances to the team-lead (adapter picker) step.
+    // advances to the team-lead naming step of the capsule wizard.
     await page.getByRole("button", { name: /Confirm mission/ }).click();
-    await expect(
-      page.getByRole("heading", { name: "Hire your team lead" }),
-    ).toBeVisible({ timeout: 30_000 });
-
-    // The CEO is the default team-lead name, and the adapter picker offers the
-    // recommended local adapters without the raw "Process" type up front.
-    await expect(page.locator('input[placeholder="CEO"]')).toHaveValue("CEO");
-    await expect(page.getByText("Claude Code").first()).toBeVisible();
+    await page.waitForSelector('input[placeholder="Chief of staff"]', {
+      timeout: 30_000,
+    });
 
     // Verify the company + company-level goal were persisted.
     const baseUrl = page.url().split("/").slice(0, 3).join("/");
