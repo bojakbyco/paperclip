@@ -449,9 +449,15 @@ export {
 } from "./asset.js";
 
 export {
+  pipelineStageApproverSchema,
   pipelineStageConfigSchema,
+  pipelineStageKindSchema,
+  pipelineStageOnEnterSchema,
   pipelineStageVariableSchema,
+  type PipelineStageApprover,
   type PipelineStageConfig,
+  type PipelineStageKind,
+  type PipelineStageOnEnter,
   type PipelineStageVariable,
 } from "./pipeline.js";
 

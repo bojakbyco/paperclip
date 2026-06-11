@@ -59,6 +59,19 @@ export interface PipelineStage {
 export interface PipelineDetail extends PipelineListItem {
   stages: PipelineStage[];
   transitions: Array<{ fromStageId: string; toStageId: string; label?: string | null }>;
+  documentKeys?: Array<{ key: string; documentId: string }>;
+}
+
+export interface PipelineTransitionEdge {
+  fromStageKey: string;
+  toStageKey: string;
+  label?: string | null;
+}
+
+export interface PipelineDocumentPayload {
+  link: { key: string; documentId: string; [key: string]: unknown };
+  document: { id: string; title: string; latestBody?: string | null; [key: string]: unknown };
+  revision?: { body?: string | null; title?: string | null; [key: string]: unknown } | null;
 }
 
 export type PipelineIntakeFieldType = "select" | "text" | "multiline";
@@ -319,6 +332,34 @@ export const pipelinesApi = {
     data: { key: string; name: string; description?: string | null; projectId?: string | null },
   ) => api.post<PipelineListItem & { stages?: PipelineStage[] }>(`/companies/${companyId}/pipelines`, data),
   get: (pipelineId: string) => api.get<PipelineDetail>(`/pipelines/${pipelineId}`),
+  update: (
+    pipelineId: string,
+    data: { name?: string; description?: string | null; enforceTransitions?: boolean; archived?: boolean },
+  ) => api.patch<PipelineListItem>(`/pipelines/${pipelineId}`, data),
+  createStage: (
+    pipelineId: string,
+    data: { key: string; name: string; kind: string; position: number; config?: Record<string, unknown> },
+  ) => api.post<PipelineStage>(`/pipelines/${pipelineId}/stages`, data),
+  updateStage: (
+    pipelineId: string,
+    stageId: string,
+    data: { key?: string; name?: string; kind?: string; position?: number; config?: Record<string, unknown> },
+  ) => api.patch<PipelineStage>(`/pipelines/${pipelineId}/stages/${stageId}`, data),
+  setTransitions: (
+    pipelineId: string,
+    data: { transitions: PipelineTransitionEdge[]; enforceTransitions?: boolean },
+  ) =>
+    api.put<{ transitions: Array<{ fromStageId: string; toStageId: string; label?: string | null }> }>(
+      `/pipelines/${pipelineId}/transitions`,
+      data,
+    ),
+  getDocument: (pipelineId: string, key: string) =>
+    api.get<PipelineDocumentPayload>(`/pipelines/${pipelineId}/documents/${encodeURIComponent(key)}`),
+  upsertDocument: (pipelineId: string, key: string, data: { title?: string; body: string }) =>
+    api.put<{ document: PipelineDocumentPayload["document"]; revision: NonNullable<PipelineDocumentPayload["revision"]> }>(
+      `/pipelines/${pipelineId}/documents/${encodeURIComponent(key)}`,
+      data,
+    ),
   getIntakeForm: (pipelineId: string) => api.get<PipelineIntakeForm>(`/pipelines/${pipelineId}/intake-form`),
   listCases: (pipelineId: string, filters?: { parentCaseId?: string; terminal?: boolean }) => {
     const params = new URLSearchParams();

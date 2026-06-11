@@ -19,6 +19,7 @@ import { IssueDetail } from "./pages/IssueDetail";
 import { IssueChatLongThreadPerf } from "./pages/IssueChatLongThreadPerf";
 import { Routines } from "./pages/Routines";
 import { Learnings, PipelineItemDetail, PipelineItemLegacyRedirect, Pipelines, ReviewQueue } from "./pages/Pipelines";
+import { PipelineSettings } from "./pages/PipelineSettings";
 import { RoutineDetail } from "./pages/RoutineDetail";
 import { UserProfile } from "./pages/UserProfile";
 import { ExecutionWorkspaceDetail } from "./pages/ExecutionWorkspaceDetail";
@@ -135,6 +136,7 @@ function boardRoutes() {
       <Route path="pipelines" element={<Pipelines />} />
       <Route path="pipelines/:pipelineId" element={<Pipelines />} />
       <Route path="pipelines/:pipelineId/add" element={<Pipelines />} />
+      <Route path="pipelines/:pipelineId/settings" element={<PipelineSettings />} />
       <Route path="pipelines/:pipelineId/items/:caseId" element={<PipelineItemDetail />} />
       <Route path="pipelines/:pipelineId/cases/:caseId" element={<PipelineItemLegacyRedirect />} />
       <Route path="routines/:routineId" element={<RoutineDetail />} />
@@ -359,6 +361,7 @@ export function App() {
           <Route path="pipelines" element={<UnprefixedBoardRedirect />} />
           <Route path="pipelines/:pipelineId" element={<UnprefixedBoardRedirect />} />
           <Route path="pipelines/:pipelineId/add" element={<UnprefixedBoardRedirect />} />
+          <Route path="pipelines/:pipelineId/settings" element={<UnprefixedBoardRedirect />} />
           <Route path="pipelines/:pipelineId/items/:caseId" element={<UnprefixedBoardRedirect />} />
           <Route path="pipelines/:pipelineId/cases/:caseId" element={<UnprefixedBoardRedirect />} />
           <Route path="routines/:routineId" element={<UnprefixedBoardRedirect />} />
