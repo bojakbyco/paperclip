@@ -141,16 +141,18 @@ describe("computePipelineHealth", () => {
     expect(report.warnings).toEqual([]);
   });
 
-  it("warns when a required variable has no default value", () => {
+  it("warns when a required variable has no default value on a stage that runs instructions", () => {
     const report = computePipelineHealth(
       baseInput([
         stage({
           config: {
+            assigneeAgentId: AGENTS.active.id,
             variables: [
               { name: "release_notes", label: "Release notes", required: true, defaultValue: null },
               { name: "channel", label: "Channel", required: false },
             ],
           },
+          instructionsBody: "Draft it.",
         }),
       ]),
     );
@@ -162,9 +164,29 @@ describe("computePipelineHealth", () => {
 
   it("accepts the legacy { key } variable shape", () => {
     const report = computePipelineHealth(
-      baseInput([stage({ config: { variables: [{ key: "topic", required: true }] } })]),
+      baseInput([
+        stage({
+          config: { onEnter: { type: "run_routine" }, variables: [{ key: "topic", required: true }] },
+          instructionsBody: "Go.",
+        }),
+      ]),
     );
     expect(report.warnings.find((w) => w.code === "unset_required_variable")?.message).toContain("topic");
+  });
+
+  it("does not warn about required variables on an entry stage with no instructions to run", () => {
+    // Entry-stage variables are the intake form — they're filled per item at
+    // ingest, so an empty default is the normal state.
+    const report = computePipelineHealth(
+      baseInput([
+        stage({
+          config: {
+            variables: [{ name: "releaseName", label: "Release name", required: true }],
+          },
+        }),
+      ]),
+    );
+    expect(report.warnings).toEqual([]);
   });
 
   it("groups warnings by stage", () => {

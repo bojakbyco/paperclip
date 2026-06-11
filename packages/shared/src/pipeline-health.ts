@@ -211,7 +211,12 @@ export function computePipelineHealth(input: PipelineHealthInput): PipelineHealt
     }
 
     // 5. Required details that were never filled in, so the step can't run.
-    const variables = Array.isArray(config.variables) ? config.variables : [];
+    // Only stages that actually run instructions (an assigned teammate or an
+    // on-enter automation) need values up front — on entry stages the same
+    // variables are the intake form, filled per item, so an empty default is
+    // the normal state, not a misconfiguration.
+    const runsInstructions = assigneeAgentId !== null || config.onEnter != null;
+    const variables = runsInstructions && Array.isArray(config.variables) ? config.variables : [];
     for (const raw of variables) {
       if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
       const entry = raw as Record<string, unknown>;
