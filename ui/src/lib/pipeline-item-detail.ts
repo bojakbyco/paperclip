@@ -181,6 +181,11 @@ export function formatPipelineItemEvent(event: PipelineCaseEvent, stages?: Stage
   if (kind === "blockers_set") return "Waiting items updated.";
   if (kind === "blockers_resolved") return "Waiting items cleared.";
   if (kind === "children_terminal") return "Built-from items completed.";
+  if (kind === "upstream_drift") {
+    const upstreamCaseKey = readString(payload.upstreamCaseKey);
+    if (upstreamCaseKey) return `Upstream change detected from ${upstreamCaseKey}.`;
+    return "Upstream change detected.";
+  }
   if (kind === "drift_acknowledged") return "Upstream change acknowledged.";
   if (kind === "automation_executed") return "Automation completed.";
   if (kind === "automation_failed") return "Automation needs attention.";

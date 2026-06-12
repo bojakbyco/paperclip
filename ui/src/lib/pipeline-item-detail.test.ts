@@ -100,6 +100,8 @@ describe("pipeline item detail helpers", () => {
       [event("case.reviewed", { decision: "request_changes" }), "Review requested changes."],
       [event("case.reviewed", { decision: "drop" }), "Review removed this item."],
       [event("case.reviewed", { decision: "approve" }), "Review approved this item."],
+      [event("upstream_drift", { upstreamCaseKey: "BLOG-12" }), "Upstream change detected from BLOG-12."],
+      [event("upstream_drift"), "Upstream change detected."],
       [event("drift_acknowledged"), "Upstream change acknowledged."],
       [event("case.unknown_kind"), "Activity recorded."],
     ];
