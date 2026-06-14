@@ -35,7 +35,7 @@ These decisions close open questions from `SPEC.md` for V1.
 | Board | Single human board operator per deployment |
 | Org graph | Strict tree (`reports_to` nullable root); no multi-manager reporting |
 | Visibility | Company-scoped visibility: board + all in-company agents can see all work objects by default; public/private deployment flags affect external exposure only and do **not** imply project/issue privacy |
-| Communication | Tasks + comments only (no separate chat system) |
+| Communication | Tasks + comments only (no separate chat system). Conversational surfaces such as the Conference Room are issue-backed and wake real selected agents by `targetAgentId` (CEO by default). |
 | Task ownership | Single assignee; atomic checkout required for `in_progress` transition |
 | Recovery | Liveness/watchdog recovery preserves explicit ownership: retry lost execution continuity where safe, otherwise open visible source-scoped recovery actions by default, use issue-backed recovery only for independent repair work, or require human escalation (see `doc/execution-semantics.md`) |
 | Agent adapters | Built-in `process`, `http`, local CLI/session adapters, and OpenClaw gateway support; external adapters can also be loaded through the adapter plugin flow |
@@ -632,12 +632,26 @@ All endpoints are under `/api` and return JSON.
 - `POST /issues/:issueId/admin/force-release` (board-only lock recovery)
 - `POST /issues/:issueId/comments`
 - `GET /issues/:issueId/comments`
+- `POST /issues/:issueId/selected-agent-chat/comments` (board-only; add a comment and wake a real selected agent, defaulting to the company CEO when `targetAgentId` is omitted)
+- `GET /issues/:issueId/live-runs?targetAgentId=:agentId`
+- `GET /issues/:issueId/active-run?targetAgentId=:agentId`
 - `POST /companies/:companyId/issues/:issueId/attachments` (multipart upload)
 - `GET /issues/:issueId/attachments`
 - `GET /attachments/:attachmentId/content`
 - `DELETE /attachments/:attachmentId`
 
-### 10.4.1 Atomic Checkout Contract
+### 10.4.1 Selected-Agent Issue Chat Contract
+
+Selected-agent chat is a thin board-user convenience over normal issue work:
+
+1. The board posts `body` to `POST /api/issues/:issueId/selected-agent-chat/comments`.
+2. `targetAgentId` is optional. When omitted, the server selects the most recently created non-terminated CEO agent in the issue company.
+3. The target agent must belong to the issue company and must not be paused, terminated, or otherwise unavailable.
+4. The server persists the board message as a normal issue comment, writes activity, and wakes only the selected target agent with `selectedAgentChat: true` and a stable `taskKey` of `selected-agent-chat:{issueId}:{targetAgentId}`.
+5. The UI reads durable history from `GET /api/issues/:issueId/comments`, reads issue-thread interactions from the normal interactions endpoints, and scopes live-run polling with `targetAgentId`.
+6. If another selected-agent chat target is already running for the issue, retargeting returns `409 selected_agent_chat_target_active` unless the caller explicitly requests interruption.
+
+### 10.4.2 Atomic Checkout Contract
 
 `POST /issues/:issueId/checkout` request:
 
@@ -721,6 +735,7 @@ The current app also exposes V1-supporting surfaces for:
 
 - issue thread interactions (`suggest_tasks`, `ask_user_questions`, `request_confirmation`)
 - issue approvals, issue references/search, labels, read state, inbox/archive state, and work products
+- Conference Room conversation issue resolution through `POST /api/board/chat/conversations` (experimental `enableConferenceRoomChat`; resolves or creates a `board_chat` issue for the selected-agent chat surface)
 - execution workspaces, project workspaces, workspace runtime services, and workspace operations
 - routines and scheduled/API/webhook triggers
 - plugin installation, configuration, state, jobs, logs, webhooks, and plugin database namespace migration
