@@ -1833,10 +1833,22 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
           {startConversation.isPending ? "Starting..." : "Start a conversation"}
         </Button>
       );
+  const reviewPanel = detail.stage.kind === "review" && reviewConfig ? (
+    <ReviewDecisionPanel
+      actions={reviewActions}
+      note={reviewDecisionNote}
+      requireReason={reviewConfig.requireRejectReason}
+      pendingDecision={decideReview.variables?.decision ?? null}
+      pending={decideReview.isPending}
+      nextItemTitle={nextReviewItem?.case.title ?? null}
+      onNoteChange={setReviewDecisionNote}
+      onDecide={(decision) => decideReview.mutate({ decision })}
+    />
+  ) : null;
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-8">
-      <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <div className="mb-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start lg:gap-8">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
             <Link to="/pipelines" className="hover:text-foreground">Pipelines</Link>
@@ -1888,28 +1900,31 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
             </p>
           ) : null}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {primaryAction}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="icon" aria-label="Item actions">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={!removeStage || removeItem.isPending}
-                onSelect={(event) => {
-                  event.preventDefault();
-                  setRemoveDialogOpen(true);
-                }}
-              >
-                <Trash2 className="h-4 w-4" />
-                Remove item
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+        <div className="flex w-full flex-col gap-5">
+          <div className="flex items-center gap-2 lg:justify-end">
+            {primaryAction}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="icon" aria-label="Item actions">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={!removeStage || removeItem.isPending}
+                  onSelect={(event) => {
+                    event.preventDefault();
+                    setRemoveDialogOpen(true);
+                  }}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  Remove item
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+          {reviewPanel}
         </div>
       </div>
 
@@ -2053,19 +2068,6 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
         </main>
 
         <aside className="space-y-8">
-          {detail.stage.kind === "review" && reviewConfig ? (
-            <ReviewDecisionPanel
-              actions={reviewActions}
-              note={reviewDecisionNote}
-              requireReason={reviewConfig.requireRejectReason}
-              pendingDecision={decideReview.variables?.decision ?? null}
-              pending={decideReview.isPending}
-              nextItemTitle={nextReviewItem?.case.title ?? null}
-              onNoteChange={setReviewDecisionNote}
-              onDecide={(decision) => decideReview.mutate({ decision })}
-            />
-          ) : null}
-
           <DetailSection title="Linked work">
             <PipelineWorkReferences references={workReferences} />
           </DetailSection>
@@ -2245,8 +2247,8 @@ function ReviewDecisionPanel({
   return (
     <section>
       <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Review</h2>
-      <div className="border-y border-amber-300 bg-amber-50/70 py-4 text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100">
-        <div className="space-y-4 px-1">
+      <div className="border-y border-amber-300 bg-amber-50/70 p-5 text-amber-950 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-100 sm:p-6">
+        <div className="space-y-5">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-1 h-5 w-5 shrink-0" />
             <div>
@@ -2262,7 +2264,7 @@ function ReviewDecisionPanel({
             <Textarea
               value={note}
               onChange={(event) => onNoteChange(event.target.value)}
-              rows={3}
+              rows={4}
               placeholder={requireReason ? "Required for changes or rejection." : "Optional note."}
               className="bg-background/90 text-foreground"
             />
@@ -2277,7 +2279,7 @@ function ReviewDecisionPanel({
                   key={action.decision}
                   type="button"
                   variant={action.variant}
-                  className="h-auto min-h-11 w-full justify-start px-3 py-2 text-left"
+                  className="h-auto min-h-14 w-full justify-start px-4 py-3 text-left"
                   aria-label={`${action.label} and move to ${action.targetStageName}`}
                   disabled={pending || reasonMissing}
                   onClick={() => onDecide(action.decision)}

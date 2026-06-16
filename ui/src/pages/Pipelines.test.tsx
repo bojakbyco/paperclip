@@ -504,6 +504,8 @@ describe("PipelineItemDetailView", () => {
 
     expect(container.textContent).toContain("In review");
     expect(container.textContent).toContain("Next in this review queue: Review the launch tweet");
+    const sectionHeadings = Array.from(container.querySelectorAll("h2")).map((heading) => heading.textContent);
+    expect(sectionHeadings.indexOf("Review")).toBeLessThan(sectionHeadings.indexOf("Conversation"));
 
     const approveButton = container.querySelector<HTMLButtonElement>('button[aria-label="Approve and move to Done"]');
     expect(approveButton).not.toBeNull();
