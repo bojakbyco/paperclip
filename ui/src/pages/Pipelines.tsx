@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNo
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { groupWarningsByStage } from "@paperclipai/shared";
 import type { IssueAttachment } from "@paperclipai/shared";
-import { AlertTriangle, ArrowUpDown, BookOpenText, Check, ChevronDown, ChevronRight, ChevronUp, Download, ExternalLink, FileText, GitBranch, Hexagon, Image as ImageIcon, Info, List, ListTree, Loader2, MessageSquare, MoreHorizontal, Plus, Search, Settings, Trash2, X } from "lucide-react";
+import { AlertTriangle, ArrowUpDown, BookOpenText, Check, ChevronDown, ChevronRight, ChevronUp, CircleDot, Download, ExternalLink, FileText, GitBranch, Hexagon, Image as ImageIcon, Info, List, ListTree, Loader2, MessageSquare, MoreHorizontal, Plus, Search, Settings, Trash2, X } from "lucide-react";
 import {
   DndContext,
   DragOverlay,
@@ -1860,6 +1860,7 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
   const stageAutomation = currentStageAutomation(detail.stage);
   const childRows = normalizePipelineChildRows(children.data);
   const eventRows = events.data?.items ?? [];
+  const activeWork = detail.activeWork ?? null;
   const waitingChildren = getWaitingChildren(childRows);
   const childrenGate = hasChildrenGate(detail.stage);
   // "Break into pieces" rollup: the configured piece noun drives every count
@@ -1974,6 +1975,10 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
           </div>
         </div>
       </div>
+
+      {activeWork ? (
+        <ActivePipelineWorkBanner activeWork={activeWork} />
+      ) : null}
 
       {banner.visible ? (
         <section className="mb-5 flex flex-col gap-3 border-y border-border bg-muted/20 py-4 md:flex-row md:items-center md:justify-between">
@@ -2180,6 +2185,48 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function ActivePipelineWorkBanner({ activeWork }: { activeWork: PipelineCaseActiveWork }) {
+  const isAutomation = activeWork.issueRole === "automation";
+  const title = isAutomation ? "Automation is running" : "Linked work is running";
+  const issueLabel = activeWork.issueIdentifier ?? activeWork.issueTitle;
+  const startedLabel = activeWork.startedAt ? `Started ${relativeTime(activeWork.startedAt)}` : null;
+
+  return (
+    <section
+      aria-label={title}
+      className="mb-5 flex flex-col gap-3 border-y border-emerald-300 bg-emerald-50 py-4 text-emerald-950 dark:border-emerald-900/70 dark:bg-emerald-950/25 dark:text-emerald-100 md:flex-row md:items-center md:justify-between"
+    >
+      <div className="flex min-w-0 gap-3">
+        <CircleDot className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700 dark:text-emerald-300" />
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
+            {title}
+          </h2>
+          <p className="mt-1 text-sm opacity-85">
+            <Link to={`/issues/${activeWork.issueId}`} className="font-medium underline-offset-2 hover:underline">
+              {issueLabel}
+            </Link>{" "}
+            is active with {activeWork.agentName}
+            {startedLabel ? ` · ${startedLabel}` : ""}.
+          </p>
+        </div>
+      </div>
+      <Button
+        asChild
+        size="sm"
+        variant="outline"
+        className="border-emerald-300 bg-transparent hover:bg-emerald-100 dark:border-emerald-900/70 dark:hover:bg-emerald-950/40"
+      >
+        <Link to={`/issues/${activeWork.issueId}`}>
+          <ExternalLink className="mr-2 h-4 w-4" />
+          Open issue
+        </Link>
+      </Button>
+    </section>
   );
 }
 

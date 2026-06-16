@@ -33,6 +33,7 @@ export type ActiveWork = {
   issueId: string;
   issueIdentifier: string | null;
   issueTitle: string;
+  issueRole: "work" | "automation";
   agentId: string;
   agentName: string;
   startedAt: Date | null;
@@ -546,6 +547,7 @@ export async function loadActiveWorkForCases(
       issueId: issues.id,
       issueIdentifier: issues.identifier,
       issueTitle: issues.title,
+      issueRole: pipelineCaseIssueLinks.role,
       agentId: issues.assigneeAgentId,
       agentName: agents.name,
       startedAt: issues.startedAt,
@@ -569,6 +571,7 @@ export async function loadActiveWorkForCases(
       issueId: row.issueId,
       issueIdentifier: row.issueIdentifier,
       issueTitle: row.issueTitle,
+      issueRole: row.issueRole as "work" | "automation",
       agentId: row.agentId!,
       agentName: row.agentName,
       startedAt: row.startedAt ?? row.issueUpdatedAt,

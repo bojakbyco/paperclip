@@ -467,10 +467,21 @@ describeEmbeddedPostgres("pipeline routes", () => {
         issueId: childIssue!.id,
         issueIdentifier: "LIVE-CHILD",
         issueTitle: "Build child work",
+        issueRole: "work",
         agentId: agent!.id,
         agentName: "Live Builder",
       },
       descendantActiveWorkCount: 1,
+    });
+
+    const grandchildDetail = await http.get(`/api/cases/${grandchild.body.case.id}`).expect(200);
+    expect(grandchildDetail.body.activeWork).toMatchObject({
+      issueId: grandchildIssue!.id,
+      issueIdentifier: "LIVE-GRANDCHILD",
+      issueTitle: "Build grandchild work",
+      issueRole: "automation",
+      agentId: agent!.id,
+      agentName: "Live Builder",
     });
   });
 

@@ -138,6 +138,7 @@ export interface PipelineCaseActiveWork {
   issueId: string;
   issueIdentifier: string | null;
   issueTitle: string;
+  issueRole?: "work" | "automation";
   agentId: string;
   agentName: string;
   startedAt: Date | string | null;
@@ -174,6 +175,7 @@ export interface PipelineCaseDetail {
     stage: PipelineStage;
     pipeline: { id: string; key: string; name: string };
   } | null;
+  activeWork?: PipelineCaseActiveWork | null;
   pendingSuggestion?: PipelineCasePendingSuggestion | null;
 }
 

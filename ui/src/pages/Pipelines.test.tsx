@@ -10,6 +10,7 @@ import type {
   PipelineAttentionCaseRef,
   PipelineAttentionFeed,
   PipelineBatchIngestResult,
+  PipelineCaseDetail,
   PipelineDetail,
   PipelineIntakeField,
   PipelineListItem,
@@ -278,7 +279,7 @@ const linkedIssue = {
   status: "todo",
 };
 
-function itemDetail(overrides: Record<string, unknown> = {}) {
+function itemDetail(overrides: Record<string, unknown> = {}): PipelineCaseDetail {
   return {
     case: {
       id: "item-1",
@@ -307,6 +308,7 @@ function itemDetail(overrides: Record<string, unknown> = {}) {
     blockers: [],
     blocks: [],
     childrenSummary: { childCount: 1, terminalChildCount: 0, loadedChildren: 1, descendantActiveWorkCount: 0 },
+    activeWork: null,
     pendingSuggestion: null,
   };
 }
@@ -776,6 +778,30 @@ describe("PipelineItemDetailView", () => {
     expect(container.textContent).toContain("6 nested items hidden");
     const link = container.querySelector('a[href="/pipelines/pipeline-features/items/feature-1"]');
     expect(link).not.toBeNull();
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows the active automation issue near the top of the item page", async () => {
+    const detail = itemDetail();
+    detail.activeWork = {
+      issueId: "issue-automation",
+      issueIdentifier: "PAP-11218",
+      issueTitle: "Run item automation",
+      issueRole: "automation",
+      agentId: "agent-1",
+      agentName: "CodexCoder",
+      startedAt: "2026-06-16T10:00:00.000Z",
+    };
+
+    const { container, root } = await renderItemPage(detail, [], { children: [], events: [] });
+
+    expect(container.textContent).toContain("Automation is running");
+    expect(container.textContent).toContain("PAP-11218");
+    expect(container.textContent).toContain("is active with CodexCoder");
+    expect(container.querySelector('a[href="/issues/issue-automation"]')).not.toBeNull();
 
     act(() => {
       root.unmount();
