@@ -412,7 +412,10 @@ describe("PipelineItemDetailView", () => {
       ].join("\n"),
     }), [], { children: [], events: [] });
 
-    expect(container.querySelector(".paperclip-markdown")).not.toBeNull();
+    const markdown = container.querySelector(".paperclip-markdown");
+    expect(markdown).not.toBeNull();
+    expect(markdown?.closest("main")).not.toBeNull();
+    expect(markdown?.closest("main")?.nextElementSibling?.tagName).toBe("ASIDE");
     expect(container.querySelector("h3")?.textContent).toBe("Acceptance");
     expect(Array.from(container.querySelectorAll("li")).map((item) => item.textContent)).toEqual([
       "Render bullets",

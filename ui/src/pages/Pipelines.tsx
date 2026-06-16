@@ -1912,11 +1912,6 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
               </DropdownMenu>
             </div>
           </div>
-          {detail.case.summary ? (
-            <MarkdownBody className="mt-2 max-w-3xl text-[15px] leading-7 text-foreground">
-              {detail.case.summary}
-            </MarkdownBody>
-          ) : null}
           {detail.parentCase ? (
             <p className="mt-2 text-sm text-muted-foreground">
               Built for{" "}
@@ -2026,7 +2021,13 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
       ) : null}
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <main className="space-y-8">
+        <main className="min-w-0 space-y-8">
+          {detail.case.summary ? (
+            <MarkdownBody className="max-w-3xl text-[15px] leading-7 text-foreground">
+              {detail.case.summary}
+            </MarkdownBody>
+          ) : null}
+
           <DetailSection title="Conversation">
             {conversationLink ? (
               <div className="space-y-3">
@@ -2090,7 +2091,7 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
           </DetailSection>
         </main>
 
-        <aside className="space-y-8">
+        <aside className="min-w-0 space-y-8">
           <DetailSection title="Linked work">
             <PipelineWorkReferences references={workReferences} />
           </DetailSection>
