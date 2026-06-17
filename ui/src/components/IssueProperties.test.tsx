@@ -30,6 +30,8 @@ const mockIssuesApi = vi.hoisted(() => ({
   list: vi.fn(),
   listLabels: vi.fn(),
   createLabel: vi.fn(),
+  upsertWatchdog: vi.fn(),
+  deleteWatchdog: vi.fn(),
 }));
 
 const mockAuthApi = vi.hoisted(() => ({
@@ -386,6 +388,8 @@ describe("IssueProperties", () => {
       name: "New label",
       color: "#6366f1",
     }));
+    mockIssuesApi.upsertWatchdog.mockResolvedValue({});
+    mockIssuesApi.deleteWatchdog.mockResolvedValue({ ok: true });
     mockAuthApi.getSession.mockResolvedValue({ user: { id: "user-1" } });
   });
 
@@ -1435,6 +1439,160 @@ describe("IssueProperties", () => {
         commentRequired: true,
         stages: [],
       },
+    });
+
+    act(() => root.unmount());
+  });
+
+  const watchdogAgent = {
+    id: "agent-1",
+    name: "ClaudeCoder",
+    role: "",
+    title: null,
+    icon: null,
+    status: "active",
+    orgChainHealth: { status: "ok" },
+  } as unknown as Parameters<typeof mockAgentsApi.list.mockResolvedValue>[0][number];
+
+  function createWatchdogSummary(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "watchdog-1",
+      companyId: "company-1",
+      issueId: "issue-1",
+      watchdogAgentId: "agent-1",
+      instructions: "Keep the tree moving.",
+      status: "active",
+      watchdogIssueId: null,
+      lastObservedFingerprint: null,
+      lastReviewedFingerprint: null,
+      lastTriggeredAt: null,
+      lastCompletedAt: null,
+      triggerCount: 0,
+      createdAt: new Date("2026-04-06T12:00:00.000Z"),
+      updatedAt: new Date("2026-04-06T12:00:00.000Z"),
+      ...overrides,
+    } as unknown as NonNullable<Issue["watchdog"]>;
+  }
+
+  it("shows the empty watchdog state and saves a new watchdog via the API", async () => {
+    mockAgentsApi.list.mockResolvedValue([watchdogAgent]);
+    const onUpdate = vi.fn();
+    const root = renderProperties(container, {
+      issue: createIssue({ watchdog: null }),
+      childIssues: [],
+      onUpdate,
+      inline: true,
+    });
+    await flush();
+
+    expect(container.textContent).toContain("Watchdog");
+    const trigger = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Set watchdog"));
+    expect(trigger).toBeTruthy();
+
+    await act(async () => {
+      trigger!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    // Choose the agent through the inline selector, then save.
+    let agentOption: HTMLElement | undefined;
+    await waitForAssertion(() => {
+      agentOption = Array.from(container.querySelectorAll("button, [role='option']"))
+        .find((node) => node.textContent?.includes("ClaudeCoder")) as HTMLElement | undefined;
+      expect(agentOption).toBeTruthy();
+    });
+    // Open the selector if the option is not yet visible, then click it.
+    await act(async () => {
+      agentOption!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const instructions = Array.from(container.querySelectorAll("textarea"))
+      .find((node) => node.getAttribute("placeholder")?.includes("watchdog"));
+    expect(instructions).toBeTruthy();
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+      setter.call(instructions!, "Watch the deploy");
+      instructions!.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+
+    const saveButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => /Set watchdog|Update/.test(button.textContent ?? "") && button.closest("[class*='space-y']"));
+    const finalSave = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent === "Set watchdog" && button !== trigger) ?? saveButton;
+    expect(finalSave).toBeTruthy();
+    await act(async () => {
+      finalSave!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(mockIssuesApi.upsertWatchdog).toHaveBeenCalledWith(
+      "issue-1",
+      expect.objectContaining({ agentId: "agent-1" }),
+    );
+
+    act(() => root.unmount());
+  });
+
+  it("renders an existing watchdog and removes it via the API", async () => {
+    mockAgentsApi.list.mockResolvedValue([watchdogAgent]);
+    const onUpdate = vi.fn();
+    const root = renderProperties(container, {
+      issue: createIssue({ watchdog: createWatchdogSummary() }),
+      childIssues: [],
+      onUpdate,
+      inline: true,
+    });
+    await flush();
+
+    await waitForAssertion(() => {
+      expect(container.textContent).toContain("ClaudeCoder");
+    });
+
+    const trigger = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("ClaudeCoder"));
+    await act(async () => {
+      trigger!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    const removeButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.includes("Remove"));
+    expect(removeButton).toBeTruthy();
+    await act(async () => {
+      removeButton!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flush();
+
+    expect(mockIssuesApi.deleteWatchdog).toHaveBeenCalledWith("issue-1");
+
+    act(() => root.unmount());
+  });
+
+  it("links to the generated watchdog task when one exists", async () => {
+    mockAgentsApi.list.mockResolvedValue([watchdogAgent]);
+    const root = renderProperties(container, {
+      issue: createIssue({ watchdog: createWatchdogSummary({ watchdogIssueId: "issue-wd" }) }),
+      childIssues: [
+        createIssue({
+          id: "issue-wd",
+          identifier: "PAP-42",
+          title: "Watchdog: Parent issue",
+          originKind: "task_watchdog",
+        }),
+      ],
+      onUpdate: vi.fn(),
+      inline: true,
+    });
+    await flush();
+
+    await waitForAssertion(() => {
+      const link = Array.from(container.querySelectorAll("a"))
+        .find((anchor) => anchor.getAttribute("href") === "/issues/issue-wd");
+      expect(link).toBeTruthy();
+      expect(link!.textContent).toContain("PAP-42");
     });
 
     act(() => root.unmount());
