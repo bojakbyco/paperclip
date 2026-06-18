@@ -1740,6 +1740,13 @@ function readStageBreakdownConfig(config: unknown) {
   return raw as Record<string, unknown>;
 }
 
+function stageHasChildrenTerminalGate(config: unknown) {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return false;
+  const record = config as Record<string, unknown>;
+  return record.requireChildrenTerminal === true ||
+    (typeof record.autoAdvanceOnChildrenTerminal === "string" && record.autoAdvanceOnChildrenTerminal.trim().length > 0);
+}
+
 function readStageAutomationId(stage: typeof pipelineStages.$inferSelect) {
   if (!stage.config || typeof stage.config !== "object" || Array.isArray(stage.config)) return null;
   const onEnterValue = (stage.config as Record<string, unknown>).onEnter;
@@ -2029,6 +2036,14 @@ async function derivePipelineCaseLiveness(
         breakdown: { expectedRequestKeys, createdRequestKeys, missingRequestKeys: [] },
       };
     }
+  }
+
+  if (stageHasChildrenTerminalGate(row.stage.config) && row.case.childCount !== row.case.terminalChildCount) {
+    return {
+      state: "waiting",
+      reason: "children_waiting",
+      message: "Pipeline item is waiting for child items to finish.",
+    };
   }
 
   if (row.stage.kind === "review") {

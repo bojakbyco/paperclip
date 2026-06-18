@@ -284,6 +284,43 @@ describeEmbeddedPostgres("pipeline routes", () => {
     await http.delete(`/api/pipelines/${pipelineId}/stages/${stageId}?moveCasesToStageId=${qaStage.body.id}`).expect(200);
   });
 
+  it.each([
+    ["require-children", { requireChildrenTerminal: true }],
+    ["auto-advance", { autoAdvanceOnChildrenTerminal: "done" }],
+  ])("classifies child-gated non-breakdown cases with unfinished children as waiting (%s)", async (suffix, config) => {
+    const company = await seedCompany();
+    const http = request(app(boardActor));
+    const pipeline = await http
+      .post(`/api/companies/${company.id}/pipelines`)
+      .send({
+        key: `child-gate-${suffix}`,
+        name: `Child gate ${suffix}`,
+        stages: [
+          { key: "waiting", name: "Waiting", kind: "working", position: 100, config },
+          { key: "done", name: "Done", kind: "done", position: 900 },
+          { key: "cancelled", name: "Cancelled", kind: "cancelled", position: 1000 },
+        ],
+      })
+      .expect(201);
+    const parent = await http
+      .post(`/api/pipelines/${pipeline.body.id}/cases`)
+      .send({ caseKey: `parent-${suffix}`, title: "Parent" })
+      .expect(201);
+    await http
+      .post(`/api/pipelines/${pipeline.body.id}/cases`)
+      .send({ caseKey: `child-${suffix}`, title: "Child", parentCaseId: parent.body.case.id })
+      .expect(201);
+
+    const detail = await http.get(`/api/cases/${parent.body.case.id}`).expect(200);
+
+    expect(detail.body.childrenSummary).toMatchObject({ childCount: 1, terminalChildCount: 0 });
+    expect(detail.body.liveness).toMatchObject({
+      state: "waiting",
+      reason: "children_waiting",
+      message: "Pipeline item is waiting for child items to finish.",
+    });
+  });
+
   it("returns origin-run producer issue as the case conversation source", async () => {
     const company = await seedCompany();
     const http = request(app(boardActor));
