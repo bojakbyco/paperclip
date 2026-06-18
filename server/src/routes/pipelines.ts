@@ -54,6 +54,8 @@ import { assertCompanyAccess } from "./authz.js";
 import {
   computePipelineHealth,
   deriveCaseType,
+  envConfigSchema,
+  type PipelineStageAutomation,
   type PipelineCaseLiveness,
   type PipelineHealthFailedAutomationInput,
   type PipelineHealthStageInput,
@@ -119,6 +121,10 @@ const updateStageSchema = z.object({
   kind: stageKindSchema.optional(),
   position: z.number().int().optional(),
   config: stageConfigSchema.optional(),
+});
+const updateStageAutomationEnvSchema = z.object({
+  env: envConfigSchema.nullable(),
+  baseRoutineRevisionId: z.string().uuid().nullable().optional(),
 });
 const replaceTransitionsSchema = z.object({
   transitions: z.array(z.object({
@@ -204,7 +210,13 @@ function stageAutomationRoutineId(config: unknown) {
 
 function withDerivedStageAutomation(
   stage: typeof pipelineStages.$inferSelect,
-  routineById: Map<string, { assigneeAgentId: string | null; description: string | null }>,
+  routineById: Map<string, {
+    assigneeAgentId: string | null;
+    description: string | null;
+    env: PipelineStageAutomation["env"];
+    latestRevisionId: string | null;
+    latestRevisionNumber: number;
+  }>,
 ) {
   const config = stage.config && typeof stage.config === "object" && !Array.isArray(stage.config)
     ? { ...(stage.config as Record<string, unknown>) }
@@ -217,8 +229,12 @@ function withDerivedStageAutomation(
     config: {
       ...config,
       automation: {
+        routineId,
         assigneeAgentId: routine.assigneeAgentId,
         instructionsBody: routine.description ?? "",
+        env: routine.env ?? null,
+        latestRoutineRevisionId: routine.latestRevisionId,
+        latestRoutineRevisionNumber: routine.latestRevisionNumber,
       },
     },
   };
@@ -756,13 +772,26 @@ export function pipelineRoutes(db: Db, options: Parameters<typeof pipelineServic
     });
     const routineRows = automationRoutineIds.length > 0
       ? await db
-          .select({ id: routines.id, assigneeAgentId: routines.assigneeAgentId, description: routines.description })
+          .select({
+            id: routines.id,
+            assigneeAgentId: routines.assigneeAgentId,
+            description: routines.description,
+            env: routines.env,
+            latestRevisionId: routines.latestRevisionId,
+            latestRevisionNumber: routines.latestRevisionNumber,
+          })
           .from(routines)
           .where(and(eq(routines.companyId, companyId), inArray(routines.id, automationRoutineIds)))
       : [];
     const routineById = new Map(routineRows.map((row) => [
       row.id,
-      { assigneeAgentId: row.assigneeAgentId, description: row.description },
+      {
+        assigneeAgentId: row.assigneeAgentId,
+        description: row.description,
+        env: row.env,
+        latestRevisionId: row.latestRevisionId,
+        latestRevisionNumber: row.latestRevisionNumber,
+      },
     ]));
     res.json({ ...pipeline, stages: stages.map((stage) => withDerivedStageAutomation(stage, routineById)), transitions, documentKeys });
   });
@@ -833,13 +862,26 @@ export function pipelineRoutes(db: Db, options: Parameters<typeof pipelineServic
     });
     const routineRows = automationRoutineIds.length > 0
       ? await db
-          .select({ id: routines.id, assigneeAgentId: routines.assigneeAgentId, description: routines.description })
+          .select({
+            id: routines.id,
+            assigneeAgentId: routines.assigneeAgentId,
+            description: routines.description,
+            env: routines.env,
+            latestRevisionId: routines.latestRevisionId,
+            latestRevisionNumber: routines.latestRevisionNumber,
+          })
           .from(routines)
           .where(and(eq(routines.companyId, companyId), inArray(routines.id, automationRoutineIds)))
       : [];
     const routineById = new Map(routineRows.map((row) => [
       row.id,
-      { assigneeAgentId: row.assigneeAgentId, description: row.description },
+      {
+        assigneeAgentId: row.assigneeAgentId,
+        description: row.description,
+        env: row.env,
+        latestRevisionId: row.latestRevisionId,
+        latestRevisionNumber: row.latestRevisionNumber,
+      },
     ]));
 
     const bodyByStageId = new Map<string, string>();
@@ -960,6 +1002,22 @@ export function pipelineRoutes(db: Db, options: Parameters<typeof pipelineServic
     } catch (error) {
       codedConflictForUnique(error);
     }
+  });
+
+  router.patch("/pipelines/:pipelineId/stages/:stageId/automation-env", validate(updateStageAutomationEnvSchema), async (req, res) => {
+    const pipelineId = req.params.pipelineId as string;
+    const stageId = req.params.stageId as string;
+    const companyId = await assertPipelineAccess(db, req, pipelineId);
+    await assertPipelineWriteAccess(req, { access, companyId, pipelineId });
+    const actor = actorForMutation(req);
+    res.json(await svc.updateStageAutomationEnv({
+      companyId,
+      pipelineId,
+      stageId,
+      env: req.body.env,
+      baseRoutineRevisionId: req.body.baseRoutineRevisionId ?? null,
+      actor,
+    }));
   });
 
   router.delete("/pipelines/:pipelineId/stages/:stageId", async (req, res) => {

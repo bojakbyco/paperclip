@@ -21,13 +21,16 @@ import {
 } from "@paperclipai/db";
 import {
   syncRoutineVariablesWithTemplate,
+  type EnvBinding,
   type PipelineCaseConversationSourceLinkRole,
   type PipelineCaseConversationSourceReason,
+  type PipelineStageAutomation,
   type RoutineVariable,
   type RoutineRevisionSnapshotV1,
 } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { routineService } from "./routines.js";
+import { secretService } from "./secrets.js";
 import type { IssueAssignmentWakeupDeps } from "./issue-assignment-wakeup.js";
 import { logActivity } from "./activity-log.js";
 import { assertAssignableAgent } from "./agent-assignability.js";
@@ -98,8 +101,12 @@ export type PipelineStageConfig = Record<string, unknown> & {
     showInAddForm?: unknown;
   }>;
   automation?: {
+    routineId?: string | null;
     assigneeAgentId?: string | null;
     instructionsBody?: string | null;
+    env?: Record<string, EnvBinding> | null;
+    latestRoutineRevisionId?: string | null;
+    latestRoutineRevisionNumber?: number;
   };
   breakdown?: {
     targetPipelineId?: unknown;
@@ -754,6 +761,27 @@ function stageAutomation(stage: typeof pipelineStages.$inferSelect) {
     id: onEnter.id ?? `${stage.id}:on_enter`,
     routineId: onEnter.routineId,
   };
+}
+
+function derivedStageAutomationPayload(routine: typeof routines.$inferSelect): PipelineStageAutomation {
+  return {
+    routineId: routine.id,
+    assigneeAgentId: routine.assigneeAgentId,
+    instructionsBody: routine.description ?? "",
+    env: routine.env ?? null,
+    latestRoutineRevisionId: routine.latestRevisionId,
+    latestRoutineRevisionNumber: routine.latestRevisionNumber,
+  };
+}
+
+function secretRefsFromEnv(env: Record<string, EnvBinding> | null | undefined) {
+  const refs: Array<{ key: string; secretId: string }> = [];
+  for (const [key, binding] of Object.entries(env ?? {})) {
+    if (binding && typeof binding === "object" && !Array.isArray(binding) && binding.type === "secret_ref") {
+      refs.push({ key, secretId: binding.secretId });
+    }
+  }
+  return refs;
 }
 
 function stageAutomationRoutineIdFromConfig(config?: PipelineStageConfig | null) {
@@ -1697,6 +1725,7 @@ async function enqueueStageAutomationLedger(
 export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeupDeps } = {}) {
   const routinesSvc = routineService(db, { heartbeat: deps.heartbeat });
   const authorization = authorizationService(db);
+  const secretsSvc = secretService(db);
 
   async function assertRoutineInCompany(companyId: string, routineId: string) {
     const routine = await db
@@ -2843,6 +2872,101 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
         }
         return updated;
       });
+    },
+
+    async updateStageAutomationEnv(input: {
+      companyId: string;
+      pipelineId: string;
+      stageId: string;
+      env: Record<string, EnvBinding> | null;
+      baseRoutineRevisionId?: string | null;
+      actor: PipelineActor;
+    }) {
+      await getPipelineOrThrow(db, input.companyId, input.pipelineId);
+      const stage = await getStageOrThrow(db, input.pipelineId, input.stageId);
+      const routineId = stageAutomationRoutineIdFromConfig(stageConfig(stage));
+      if (!routineId) {
+        throw unprocessable("Pipeline stage does not have automation configured", {
+          code: "stage_automation_required",
+        });
+      }
+
+      const normalizedEnv = input.env === null
+        ? null
+        : await secretsSvc.normalizeEnvBindingsForPersistence(input.companyId, input.env, {
+            strictMode: process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true",
+            fieldPath: "env",
+          }) as Record<string, EnvBinding>;
+      const actorPatch = routineActorPatch(input.actor);
+      const updatedRoutine = await db.transaction(async (tx) => {
+        const txDb = tx as unknown as Db;
+        await tx.execute(sql`select id from ${routines} where ${routines.id} = ${routineId} for update`);
+        const locked = await txDb
+          .select()
+          .from(routines)
+          .where(and(eq(routines.id, routineId), eq(routines.companyId, input.companyId)))
+          .then((rows) => rows[0] ?? null);
+        if (!locked) throw notFound("Pipeline stage automation routine not found");
+        if (!locked.assigneeAgentId) {
+          throw unprocessable("Pipeline stage automation must have an assignee before env can be saved", {
+            code: "stage_automation_assignee_required",
+            routineId,
+          });
+        }
+        if (input.baseRoutineRevisionId && input.baseRoutineRevisionId !== locked.latestRevisionId) {
+          throw conflict("Stage automation routine was updated by someone else", {
+            currentRoutineRevisionId: locked.latestRevisionId,
+          });
+        }
+
+        const [routineWithEnv] = await txDb
+          .update(routines)
+          .set({
+            env: normalizedEnv,
+            updatedByAgentId: actorPatch.agentId,
+            updatedByUserId: actorPatch.userId,
+            updatedAt: nowDate(),
+          })
+          .where(and(eq(routines.id, locked.id), eq(routines.companyId, input.companyId)))
+          .returning();
+        if (!routineWithEnv) throw notFound("Pipeline stage automation routine not found");
+        const routineWithRevision = await appendPipelineAutomationRoutineRevision(
+          txDb,
+          routineWithEnv,
+          input.actor,
+          "Updated pipeline stage secrets",
+        );
+        await secretsSvc.syncEnvBindingsForTarget(
+          input.companyId,
+          { targetType: "routine", targetId: routineWithRevision.id },
+          normalizedEnv,
+          { db: tx },
+        );
+        const envKeys = Object.keys(normalizedEnv ?? {}).sort();
+        const secretRefs = secretRefsFromEnv(normalizedEnv);
+        await logActivity(txDb, {
+          companyId: input.companyId,
+          ...activityActorPatch(input.actor),
+          action: "pipeline.stage_automation_env_updated",
+          entityType: "pipeline_stage",
+          entityId: input.stageId,
+          details: {
+            pipelineId: input.pipelineId,
+            stageId: input.stageId,
+            routineId: routineWithRevision.id,
+            envKeys,
+            envCount: envKeys.length,
+            bindingRefKeys: secretRefs.map((ref) => ref.key).sort(),
+            bindingRefIds: [...new Set(secretRefs.map((ref) => ref.secretId))].sort(),
+            bindingRefCount: secretRefs.length,
+            routineRevisionId: routineWithRevision.latestRevisionId,
+            routineRevisionNumber: routineWithRevision.latestRevisionNumber,
+          },
+        });
+        return routineWithRevision;
+      });
+
+      return derivedStageAutomationPayload(updatedRoutine);
     },
 
     async deleteStage(input: {

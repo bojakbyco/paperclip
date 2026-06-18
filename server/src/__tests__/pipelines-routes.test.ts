@@ -8,6 +8,8 @@ import {
   activityLog,
   companies,
   companyMemberships,
+  companySecretBindings,
+  companySecrets,
   createDb,
   documents,
   documentRevisions,
@@ -74,10 +76,12 @@ describeEmbeddedPostgres("pipeline routes", () => {
     await db.delete(issueComments);
     await db.delete(routineRuns);
     await db.delete(routineRevisions);
+    await db.delete(companySecretBindings);
     await db.delete(heartbeatRuns);
     await db.delete(issues);
     await db.delete(pipelines);
     await db.delete(routines);
+    await db.delete(companySecrets);
     await db.delete(principalPermissionGrants);
     await db.delete(companyMemberships);
     await db.delete(agents);
@@ -1130,9 +1134,13 @@ describeEmbeddedPostgres("pipeline routes", () => {
 
     const detail = await http.get(`/api/pipelines/${pipeline.body.id}`).expect(200);
     const detailStage = detail.body.stages.find((item: { id: string }) => item.id === stage.id);
-    expect(detailStage.config.automation).toEqual({
+    expect(detailStage.config.automation).toMatchObject({
+      routineId,
       assigneeAgentId: firstAgent!.id,
       instructionsBody: "Draft the item.",
+      env: null,
+      latestRoutineRevisionId: routine!.latestRevisionId,
+      latestRoutineRevisionNumber: 1,
     });
 
     const synced = await http
@@ -1174,6 +1182,183 @@ describeEmbeddedPostgres("pipeline routes", () => {
       originKind: "manual",
       originId: null,
     });
+  });
+
+  it("saves stage automation env on the backing routine and syncs secret bindings", async () => {
+    const company = await seedCompany();
+    const [agent] = await db.insert(agents).values({
+      companyId: company.id,
+      name: "Stage Agent",
+      role: "worker",
+      status: "idle",
+    }).returning();
+    const [secret] = await db.insert(companySecrets).values({
+      companyId: company.id,
+      key: "github_token",
+      name: "GitHub token",
+    }).returning();
+    const http = request(app(boardActor));
+    const pipeline = await http.post(`/api/companies/${company.id}/pipelines`).send({ key: "stage-env", name: "Stage env" }).expect(201);
+    const stage = pipeline.body.stages.find((item: { key: string }) => item.key === "in_progress");
+    const created = await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}`)
+      .send({
+        config: {
+          automation: {
+            assigneeAgentId: agent!.id,
+            instructionsBody: "Use the env.",
+          },
+        },
+      })
+      .expect(200);
+    const routineId = created.body.config.onEnter.routineId;
+    const [before] = await db.select().from(routines).where(eq(routines.id, routineId));
+
+    const saved = await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}/automation-env`)
+      .send({
+        baseRoutineRevisionId: before!.latestRevisionId,
+        env: {
+          GH_TOKEN: { type: "secret_ref", secretId: secret!.id, version: "latest" },
+          NODE_ENV: { type: "plain", value: "production" },
+        },
+      })
+      .expect(200);
+
+    expect(saved.body).toMatchObject({
+      routineId,
+      assigneeAgentId: agent!.id,
+      instructionsBody: "Use the env.",
+      env: {
+        GH_TOKEN: { type: "secret_ref", secretId: secret!.id, version: "latest" },
+        NODE_ENV: { type: "plain", value: "production" },
+      },
+      latestRoutineRevisionNumber: 2,
+    });
+    expect(saved.body.latestRoutineRevisionId).not.toBe(before!.latestRevisionId);
+
+    const [routine] = await db.select().from(routines).where(eq(routines.id, routineId));
+    expect(routine!.env).toEqual(saved.body.env);
+    expect(routine!.latestRevisionNumber).toBe(2);
+    const revisions = await db.select().from(routineRevisions).where(eq(routineRevisions.routineId, routineId));
+    expect(revisions).toHaveLength(2);
+    expect(revisions.find((revision) => revision.id === routine!.latestRevisionId)!.snapshot).toMatchObject({
+      routine: { env: saved.body.env },
+    });
+    const bindings = await db.select().from(companySecretBindings).where(eq(companySecretBindings.targetId, routineId));
+    expect(bindings).toHaveLength(1);
+    expect(bindings[0]).toMatchObject({
+      companyId: company.id,
+      secretId: secret!.id,
+      targetType: "routine",
+      configPath: "env.GH_TOKEN",
+      versionSelector: "latest",
+    });
+    const [stageAfter] = await db.select().from(pipelineStages).where(eq(pipelineStages.id, stage.id));
+    expect(stageAfter!.config).toMatchObject({ onEnter: { type: "run_routine", routineId } });
+    expect(stageAfter!.config).not.toHaveProperty("automation");
+    expect(JSON.stringify(stageAfter!.config)).not.toContain(secret!.id);
+
+    const detail = await http.get(`/api/pipelines/${pipeline.body.id}`).expect(200);
+    const detailStage = detail.body.stages.find((item: { id: string }) => item.id === stage.id);
+    expect(detailStage.config.automation).toMatchObject(saved.body);
+
+    const events = await db.select().from(activityLog).where(eq(activityLog.entityId, stage.id));
+    const event = events.find((item) => item.action === "pipeline.stage_automation_env_updated");
+    expect(event!.details).toMatchObject({
+      envKeys: ["GH_TOKEN", "NODE_ENV"],
+      bindingRefKeys: ["GH_TOKEN"],
+      bindingRefIds: [secret!.id],
+      bindingRefCount: 1,
+    });
+    expect(JSON.stringify(event!.details)).not.toContain("production");
+  });
+
+  it("rejects stale stage automation env saves", async () => {
+    const company = await seedCompany();
+    const [agent] = await db.insert(agents).values({
+      companyId: company.id,
+      name: "Stage Agent",
+      role: "worker",
+      status: "idle",
+    }).returning();
+    const http = request(app(boardActor));
+    const pipeline = await http.post(`/api/companies/${company.id}/pipelines`).send({ key: "stale-env", name: "Stale env" }).expect(201);
+    const stage = pipeline.body.stages.find((item: { key: string }) => item.key === "in_progress");
+    await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}`)
+      .send({ config: { automation: { assigneeAgentId: agent!.id, instructionsBody: "Use env." } } })
+      .expect(200);
+
+    await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}/automation-env`)
+      .send({
+        baseRoutineRevisionId: randomUUID(),
+        env: { SAFE_VALUE: { type: "plain", value: "ok" } },
+      })
+      .expect(409);
+  });
+
+  it("requires stage automation and an assignee before saving stage automation env", async () => {
+    const company = await seedCompany();
+    const [agent] = await db.insert(agents).values({
+      companyId: company.id,
+      name: "Stage Agent",
+      role: "worker",
+      status: "idle",
+    }).returning();
+    const http = request(app(boardActor));
+    const pipeline = await http.post(`/api/companies/${company.id}/pipelines`).send({ key: "needs-automation", name: "Needs automation" }).expect(201);
+    const stage = pipeline.body.stages.find((item: { key: string }) => item.key === "in_progress");
+
+    await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}/automation-env`)
+      .send({ env: { SAFE_VALUE: { type: "plain", value: "ok" } } })
+      .expect(422);
+
+    const created = await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}`)
+      .send({ config: { automation: { assigneeAgentId: agent!.id, instructionsBody: "Use env." } } })
+      .expect(200);
+    const routineId = created.body.config.onEnter.routineId;
+    await db.update(routines).set({ assigneeAgentId: null }).where(eq(routines.id, routineId));
+
+    await http
+      .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}/automation-env`)
+      .send({ env: { SAFE_VALUE: { type: "plain", value: "ok" } } })
+      .expect(422);
+  });
+
+  it("applies strict-mode env validation to stage automation env saves", async () => {
+    const previous = process.env.PAPERCLIP_SECRETS_STRICT_MODE;
+    process.env.PAPERCLIP_SECRETS_STRICT_MODE = "true";
+    try {
+      const company = await seedCompany();
+      const [agent] = await db.insert(agents).values({
+        companyId: company.id,
+        name: "Stage Agent",
+        role: "worker",
+        status: "idle",
+      }).returning();
+      const http = request(app(boardActor));
+      const pipeline = await http.post(`/api/companies/${company.id}/pipelines`).send({ key: "strict-env", name: "Strict env" }).expect(201);
+      const stage = pipeline.body.stages.find((item: { key: string }) => item.key === "in_progress");
+      await http
+        .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}`)
+        .send({ config: { automation: { assigneeAgentId: agent!.id, instructionsBody: "Use env." } } })
+        .expect(200);
+
+      await http
+        .patch(`/api/pipelines/${pipeline.body.id}/stages/${stage.id}/automation-env`)
+        .send({ env: { ACCESS_TOKEN: { type: "plain", value: "not-secret-backed" } } })
+        .expect(422);
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PAPERCLIP_SECRETS_STRICT_MODE;
+      } else {
+        process.env.PAPERCLIP_SECRETS_STRICT_MODE = previous;
+      }
+    }
   });
 
   it("writes an audit event when an agent removes a case issue link", async () => {

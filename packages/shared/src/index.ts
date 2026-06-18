@@ -35,6 +35,7 @@ export {
 } from "./pipeline-case-type.js";
 export type {
   PipelineCaseConversationSource,
+  PipelineStageAutomation,
   PipelineCaseLiveness,
   PipelineCaseLivenessState,
   PipelineCaseConversationSourceLinkRole,

@@ -1,4 +1,5 @@
 import type { Issue } from "./issue.js";
+import type { RoutineEnvConfig } from "./routine.js";
 
 export type PipelineCaseConversationSourceReason =
   | "producer_update"
@@ -14,6 +15,15 @@ export interface PipelineCaseConversationSource {
   reason: PipelineCaseConversationSourceReason;
   linkRole?: PipelineCaseConversationSourceLinkRole | null;
   sourceRunId?: string | null;
+}
+
+export interface PipelineStageAutomation {
+  routineId: string;
+  assigneeAgentId: string | null;
+  instructionsBody: string;
+  env: RoutineEnvConfig | null;
+  latestRoutineRevisionId: string | null;
+  latestRoutineRevisionNumber: number;
 }
 
 export type PipelineCaseLivenessState = "terminal" | "live" | "waiting" | "blocked" | "attention";
