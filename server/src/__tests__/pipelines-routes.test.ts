@@ -2291,9 +2291,21 @@ describeEmbeddedPostgres("pipeline routes", () => {
     });
     const [executionIssue] = await db.select().from(issues).where(eq(issues.originRunId, run!.id));
     expect(executionIssue!.title).toBe("[Pipeline: Agent fanout > Planning] Release (release): Fan out v1 shipped");
-    expect(executionIssue!.description).toContain("## Pipeline Automation Preamble");
-    expect(executionIssue!.description).toContain(`GET /api/cases/${parent.body.case.id}`);
-    expect(executionIssue!.description).toContain("Create child work for");
+    const description = executionIssue!.description ?? "";
+    const sectionOrder = [
+      "## Pipeline Stage Automation",
+      "## User Task",
+      "## Workflow Instructions",
+      "## Technical Context",
+    ].map((heading) => description.indexOf(heading));
+    expect(sectionOrder.every((index) => index >= 0)).toBe(true);
+    expect(sectionOrder).toEqual([...sectionOrder].sort((left, right) => left - right));
+    expect(description).toContain(`---\n\nCreate child work for ${parent.body.case.id}.\n\n---`);
+    expect(description).toContain("`pipeline-case-operations`");
+    expect(description).toContain(`- case_id: ${parent.body.case.id}`);
+    expect(description).toContain("- release_notes: v1 shipped");
+    expect(description.match(/```json/g)).toHaveLength(1);
+    expect(description).not.toContain("{pipelineId}");
 
     const agentActor: Express.Request["actor"] = {
       type: "agent",
