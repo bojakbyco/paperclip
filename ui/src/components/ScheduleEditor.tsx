@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
@@ -205,16 +205,10 @@ export function ScheduleEditor({
   const [dayOfWeek, setDayOfWeek] = useState(parsed.dayOfWeek);
   const [dayOfMonth, setDayOfMonth] = useState(parsed.dayOfMonth);
   const [customCron, setCustomCron] = useState(preset === "custom" ? value : "");
-  const lastCustomEditRef = useRef<string | null>(preset === "custom" ? value : null);
   const customValidation = useMemo(() => getScheduleCronValidation(customCron), [customCron]);
 
   // Sync from external value changes
   useEffect(() => {
-    if (preset === "custom" && value === lastCustomEditRef.current) {
-      setCustomCron(value);
-      return;
-    }
-
     const p = parseCronToPreset(value);
     setPreset(p.preset);
     setHour(p.hour);
@@ -239,7 +233,6 @@ export function ScheduleEditor({
     setPreset(newPreset);
     if (newPreset === "custom") {
       setCustomCron(value);
-      lastCustomEditRef.current = value;
     } else {
       emitChange(newPreset, hour, minute, dayOfWeek, dayOfMonth, customCron);
     }
@@ -266,9 +259,10 @@ export function ScheduleEditor({
             value={customCron}
             onChange={(e) => {
               const nextCron = e.target.value;
-              lastCustomEditRef.current = nextCron;
               setCustomCron(nextCron);
-              emitChange("custom", hour, minute, dayOfWeek, dayOfMonth, nextCron);
+              if (getScheduleCronValidation(nextCron).valid) {
+                emitChange("custom", hour, minute, dayOfWeek, dayOfMonth, nextCron);
+              }
             }}
             placeholder="0 10 * * *"
             aria-label="Cron expression"

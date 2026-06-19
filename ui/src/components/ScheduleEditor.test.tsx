@@ -107,6 +107,7 @@ describe("ScheduleEditor", () => {
     expect(cronInput()?.value).toBe("0 8-18/2 *");
     expect(cronInput()?.getAttribute("aria-invalid")).toBe("true");
     expect(container.textContent).toContain("Use exactly 5 fields");
+    expect(onChange).not.toHaveBeenCalledWith("0 8-18/2 *");
 
     act(() => {
       typeCron(cronInput()!, "0 8-18/2 * * 1-5");
