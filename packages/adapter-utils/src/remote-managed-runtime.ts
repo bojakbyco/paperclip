@@ -88,6 +88,7 @@ export async function prepareRemoteManagedRuntime(input: {
     spec: input.spec,
     localDir: input.workspaceLocalDir,
     remoteDir: workspaceRemoteDir,
+    onProgress: input.onProgress,
   });
   const restoreExclude = preparedWorkspace.gitBacked ? [".git", ".paperclip-runtime"] : [".paperclip-runtime"];
   const baselineSnapshot = await captureDirectorySnapshot(input.workspaceLocalDir, {
@@ -105,6 +106,8 @@ export async function prepareRemoteManagedRuntime(input: {
         remoteDir,
         followSymlinks: asset.followSymlinks,
         exclude: asset.exclude,
+        onProgress: input.onProgress,
+        progressLabel: asset.key,
       });
     }
   } catch (error) {
@@ -114,6 +117,7 @@ export async function prepareRemoteManagedRuntime(input: {
       remoteDir: workspaceRemoteDir,
       baselineSnapshot,
       restoreGitHistory: preparedWorkspace.gitBacked,
+      onProgress: input.onProgress,
     });
     throw error;
   }
@@ -124,13 +128,14 @@ export async function prepareRemoteManagedRuntime(input: {
     workspaceRemoteDir,
     runtimeRootDir,
     assetDirs,
-    restoreWorkspace: async (_onProgress?: RuntimeProgressSink) => {
+    restoreWorkspace: async (onProgress?: RuntimeProgressSink) => {
       await restoreWorkspaceFromSshExecution({
         spec: input.spec,
         localDir: input.workspaceLocalDir,
         remoteDir: workspaceRemoteDir,
         baselineSnapshot,
         restoreGitHistory: preparedWorkspace.gitBacked,
+        onProgress,
       });
     },
   };

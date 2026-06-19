@@ -4,10 +4,17 @@ import { constants as fsConstants, createReadStream, createWriteStream, promises
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Transform } from "node:stream";
 import type { CommandManagedRuntimeRunner } from "./command-managed-runtime.js";
 import type { RunProcessResult } from "./server-utils.js";
 import type { DirectorySnapshot } from "./workspace-restore-merge.js";
 import { mergeDirectoryWithBaseline } from "./workspace-restore-merge.js";
+import {
+  createRuntimeProgressReporter,
+  type RuntimeProgressDirection,
+  type RuntimeProgressPhase,
+  type RuntimeProgressSink,
+} from "./runtime-progress.js";
 
 export interface SshConnectionConfig {
   host: string;
@@ -409,6 +416,129 @@ function tarSpawnEnv(): NodeJS.ProcessEnv {
   };
 }
 
+// Converts a tar `--exclude` pattern into a regexp for the local-size estimate.
+// We only need approximate fidelity here (the estimate feeds a clamped percent),
+// so we support the literal names and `*`/`?` globs used in practice.
+function tarPatternToRegExp(pattern: string): RegExp {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\?/g, "[^/]");
+  return new RegExp(`^${escaped}$`);
+}
+
+// Walks `localDir` summing regular-file sizes, mirroring tar's `--exclude`
+// handling (plus the implicit `._*`) and `followSymlinks` so the to-ssh upload
+// can report an estimated total before tar finishes producing the stream.
+async function estimateLocalDirSize(input: {
+  localDir: string;
+  exclude?: string[];
+  followSymlinks?: boolean;
+}): Promise<number> {
+  const regexes = ["._*", ...(input.exclude ?? [])].map(tarPatternToRegExp);
+  const isExcluded = (relPath: string, base: string) =>
+    regexes.some((regex) => regex.test(relPath) || regex.test(base));
+
+  let total = 0;
+  const walk = async (dir: string, relative: string): Promise<void> => {
+    const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const entryRelative = relative ? `${relative}/${entry.name}` : entry.name;
+      if (isExcluded(entryRelative, entry.name)) continue;
+      const full = path.join(dir, entry.name);
+      const stats = await (input.followSymlinks ? fs.stat(full) : fs.lstat(full)).catch(() => null);
+      if (!stats) continue;
+      if (stats.isDirectory()) {
+        await walk(full, entryRelative);
+      } else if (stats.isFile()) {
+        total += stats.size;
+      }
+    }
+  };
+  await walk(input.localDir, "");
+  return total;
+}
+
+// Best-effort remote size probe for the from-ssh restore. `du -sk` is POSIX and
+// available on the BSD/Linux remotes we target; it over-counts (block-rounded,
+// includes excluded dirs) which keeps the reported percent safely below 100
+// until the stream actually closes. Returns null when unavailable so the caller
+// falls back to MB-received mode.
+async function probeRemoteDirSize(input: {
+  spec: SshConnectionConfig;
+  remoteDir: string;
+}): Promise<number | null> {
+  try {
+    const result = await runSshScript(
+      input.spec,
+      `du -sk ${shellQuote(input.remoteDir)} 2>/dev/null | cut -f1`,
+      { timeoutMs: 15_000, maxBuffer: 16 * 1024 },
+    );
+    const kilobytes = Number.parseInt(result.stdout.trim(), 10);
+    return Number.isFinite(kilobytes) && kilobytes > 0 ? kilobytes * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+
+interface TransferProgress {
+  // Backpressure-respecting counter to splice into a transport pipe.
+  counter: Transform;
+  // Last cumulative byte count observed by the counter.
+  transferred: () => number;
+  // Emit the terminal completion line. Idempotent.
+  finish: () => Promise<void>;
+}
+
+// Wraps a throttled progress reporter behind a counting Transform so transports
+// can `source.pipe(progress.counter).pipe(dest)`. When `totalBytes` is a known
+// exact size (e.g. a git bundle) the reporter emits an exact percentage. When it
+// is an estimate (tar upload / remote probe) we clamp the reported bytes to 99%
+// of the estimate so an inaccurate total never shows a premature 100%; `finish`
+// then emits the terminal 100% (or, in MB-only mode, the final MB) line.
+function createTransferProgress(input: {
+  onProgress: RuntimeProgressSink;
+  phase: RuntimeProgressPhase;
+  direction: RuntimeProgressDirection;
+  label?: string;
+  totalBytes: number | null;
+  estimated: boolean;
+}): TransferProgress {
+  const reporter = createRuntimeProgressReporter({
+    sink: input.onProgress,
+    phase: input.phase,
+    direction: input.direction,
+    label: input.label,
+    target: "ssh",
+  });
+  const total = input.totalBytes != null && input.totalBytes > 0 ? input.totalBytes : null;
+  const cap = total != null && input.estimated ? Math.floor(total * 0.99) : null;
+
+  let transferred = 0;
+  let chain: Promise<void> = Promise.resolve();
+  const enqueue = (work: () => Promise<void>) => {
+    chain = chain.then(work).catch(() => undefined);
+  };
+
+  const counter = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      transferred += chunk.length;
+      const reported = cap != null ? Math.min(transferred, cap) : transferred;
+      enqueue(() => reporter.report(reported, total));
+      callback(null, chunk);
+    },
+  });
+
+  return {
+    counter,
+    transferred: () => transferred,
+    finish: async () => {
+      await chain.catch(() => undefined);
+      await reporter.complete(total != null ? total : transferred, total).catch(() => undefined);
+    },
+  };
+}
+
 async function runSshScript(
   config: SshConnectionConfig,
   script: string,
@@ -493,6 +623,7 @@ async function streamLocalFileToSsh(input: {
   spec: SshConnectionConfig;
   localFile: string;
   remoteScript: string;
+  progress?: TransferProgress;
 }): Promise<void> {
   const auth = await createSshAuthArgs(input.spec);
   const sshArgs = [
@@ -525,7 +656,12 @@ async function streamLocalFileToSsh(input: {
     });
     source.on("error", fail);
     ssh.on("error", fail);
-    source.pipe(ssh.stdin ?? null);
+    if (input.progress) {
+      input.progress.counter.on("error", fail);
+      source.pipe(input.progress.counter).pipe(ssh.stdin ?? null);
+    } else {
+      source.pipe(ssh.stdin ?? null);
+    }
     ssh.on("close", (code) => {
       if (settled) return;
       settled = true;
@@ -542,6 +678,7 @@ async function streamSshToLocalFile(input: {
   spec: SshConnectionConfig;
   remoteScript: string;
   localFile: string;
+  progress?: TransferProgress;
 }): Promise<void> {
   const auth = await createSshAuthArgs(input.spec);
   const sshArgs = [
@@ -569,7 +706,12 @@ async function streamSshToLocalFile(input: {
       reject(error);
     };
 
-    ssh.stdout?.pipe(sink);
+    if (input.progress) {
+      input.progress.counter.on("error", fail);
+      ssh.stdout?.pipe(input.progress.counter).pipe(sink);
+    } else {
+      ssh.stdout?.pipe(sink);
+    }
     ssh.stderr?.on("data", (chunk) => {
       sshStderr += String(chunk);
     });
@@ -594,6 +736,7 @@ async function importGitWorkspaceToSsh(input: {
   localDir: string;
   remoteDir: string;
   snapshot: LocalGitWorkspaceSnapshot;
+  onProgress?: RuntimeProgressSink;
 }): Promise<void> {
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-ssh-bundle-"));
   const bundlePath = path.join(bundleDir, "workspace.bundle");
@@ -628,11 +771,26 @@ async function importGitWorkspaceToSsh(input: {
       `git -C ${shellQuote(input.remoteDir)} update-ref -d ${shellQuote(tempRef)} >/dev/null 2>&1 || true`,
     ].join("\n");
 
+    // The git bundle is a real local file of known size, so report an exact
+    // percentage. No `workspace` label: the "Importing git history" phase is
+    // already self-describing in the log line.
+    const progress = input.onProgress
+      ? createTransferProgress({
+        onProgress: input.onProgress,
+        phase: "Importing git history",
+        direction: "to",
+        totalBytes: (await fs.stat(bundlePath)).size,
+        estimated: false,
+      })
+      : null;
+
     await streamLocalFileToSsh({
       spec: input.spec,
       localFile: bundlePath,
       remoteScript: remoteSetupScript,
+      progress: progress ?? undefined,
     });
+    await progress?.finish();
   } finally {
     await runLocalGit(input.localDir, ["update-ref", "-d", tempRef], {
       timeout: 10_000,
@@ -648,6 +806,7 @@ async function exportGitWorkspaceFromSsh(input: {
   localDir: string;
   importedRef?: string;
   resetLocalWorkspace?: boolean;
+  onProgress?: RuntimeProgressSink;
 }): Promise<string> {
   const bundleDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-ssh-bundle-"));
   const bundlePath = path.join(bundleDir, "workspace.bundle");
@@ -665,11 +824,25 @@ async function exportGitWorkspaceFromSsh(input: {
       'cat "$tmp_bundle"',
     ].join("\n");
 
+    // The remote bundle size isn't known before streaming, so report bytes
+    // received (MB mode) with a terminal completion line.
+    const progress = input.onProgress
+      ? createTransferProgress({
+        onProgress: input.onProgress,
+        phase: "Exporting git history",
+        direction: "from",
+        totalBytes: null,
+        estimated: false,
+      })
+      : null;
+
     await streamSshToLocalFile({
       spec: input.spec,
       remoteScript: exportScript,
       localFile: bundlePath,
+      progress: progress ?? undefined,
     });
+    await progress?.finish();
 
     await runLocalGit(input.localDir, ["fetch", "--force", bundlePath, `refs/paperclip/ssh-sync/export:${importedRef}`], {
       timeout: 60_000,
@@ -1049,6 +1222,8 @@ export async function syncDirectoryToSsh(input: {
   remoteDir: string;
   exclude?: string[];
   followSymlinks?: boolean;
+  onProgress?: RuntimeProgressSink;
+  progressLabel?: string;
 }): Promise<void> {
   const auth = await createSshAuthArgs(input.spec);
   const sshArgs = [
@@ -1058,6 +1233,23 @@ export async function syncDirectoryToSsh(input: {
     `${input.spec.username}@${input.spec.host}`,
     `sh -c ${shellQuote(`mkdir -p ${shellQuote(input.remoteDir)} && tar -xf - -C ${shellQuote(input.remoteDir)}`)}`,
   ];
+
+  // tar's archive size isn't known until tar finishes, so estimate it from the
+  // local file sizes and clamp the reported percent to 99% until the pipe closes.
+  const progress = input.onProgress
+    ? createTransferProgress({
+      onProgress: input.onProgress,
+      phase: "Syncing",
+      direction: "to",
+      label: input.progressLabel,
+      totalBytes: await estimateLocalDirSize({
+        localDir: input.localDir,
+        exclude: input.exclude,
+        followSymlinks: input.followSymlinks,
+      }),
+      estimated: true,
+    })
+    : null;
 
   await new Promise<void>((resolve, reject) => {
     const tarArgs = [
@@ -1111,7 +1303,12 @@ export async function syncDirectoryToSsh(input: {
       reject(error);
     };
 
-    tar.stdout?.pipe(ssh.stdin ?? null);
+    if (progress) {
+      progress.counter.on("error", fail);
+      tar.stdout?.pipe(progress.counter).pipe(ssh.stdin ?? null);
+    } else {
+      tar.stdout?.pipe(ssh.stdin ?? null);
+    }
     tar.stderr?.on("data", (chunk) => {
       tarStderr += String(chunk);
     });
@@ -1132,6 +1329,7 @@ export async function syncDirectoryToSsh(input: {
       maybeFinish();
     });
   }).finally(auth.cleanup);
+  await progress?.finish();
 }
 
 export async function syncDirectoryFromSsh(input: {
@@ -1140,6 +1338,8 @@ export async function syncDirectoryFromSsh(input: {
   localDir: string;
   exclude?: string[];
   preserveLocalEntries?: string[];
+  onProgress?: RuntimeProgressSink;
+  progressLabel?: string;
 }): Promise<void> {
   const auth = await createSshAuthArgs(input.spec);
   const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-ssh-sync-back-"));
@@ -1154,6 +1354,23 @@ export async function syncDirectoryFromSsh(input: {
     `${input.spec.username}@${input.spec.host}`,
     `sh -c ${shellQuote(remoteTarScript)}`,
   ];
+
+  // The remote tar size isn't known locally, so probe the remote directory for
+  // an estimate (clamped to 99%). When the probe is unavailable we report bytes
+  // received in MB mode with a terminal completion line.
+  const remoteTotal = input.onProgress
+    ? await probeRemoteDirSize({ spec: input.spec, remoteDir: input.remoteDir })
+    : null;
+  const progress = input.onProgress
+    ? createTransferProgress({
+      onProgress: input.onProgress,
+      phase: "Restoring",
+      direction: "from",
+      label: input.progressLabel,
+      totalBytes: remoteTotal,
+      estimated: remoteTotal != null,
+    })
+    : null;
 
   try {
     await new Promise<void>((resolve, reject) => {
@@ -1195,7 +1412,12 @@ export async function syncDirectoryFromSsh(input: {
         reject(error);
       };
 
-      ssh.stdout?.pipe(tar.stdin ?? null);
+      if (progress) {
+        progress.counter.on("error", fail);
+        ssh.stdout?.pipe(progress.counter).pipe(tar.stdin ?? null);
+      } else {
+        ssh.stdout?.pipe(tar.stdin ?? null);
+      }
       ssh.stderr?.on("data", (chunk) => {
         sshStderr += String(chunk);
       });
@@ -1216,6 +1438,7 @@ export async function syncDirectoryFromSsh(input: {
         maybeFinish();
       });
     });
+    await progress?.finish();
 
     await clearLocalDirectory(input.localDir, input.preserveLocalEntries);
     await copyDirectoryContents(stagingDir, input.localDir);
@@ -1229,6 +1452,7 @@ export async function prepareWorkspaceForSshExecution(input: {
   spec: SshRemoteExecutionSpec;
   localDir: string;
   remoteDir?: string;
+  onProgress?: RuntimeProgressSink;
 }): Promise<{ gitBacked: boolean }> {
   const remoteDir = input.remoteDir ?? input.spec.remoteCwd;
   const gitSnapshot = await readLocalGitWorkspaceSnapshot(input.localDir);
@@ -1239,12 +1463,15 @@ export async function prepareWorkspaceForSshExecution(input: {
       localDir: input.localDir,
       remoteDir,
       snapshot: gitSnapshot,
+      onProgress: input.onProgress,
     });
     await syncDirectoryToSsh({
       spec: input.spec,
       localDir: input.localDir,
       remoteDir,
       exclude: [".git", ".paperclip-runtime"],
+      onProgress: input.onProgress,
+      progressLabel: "workspace",
     });
     await removeDeletedPathsOnSsh({
       spec: input.spec,
@@ -1264,6 +1491,8 @@ export async function prepareWorkspaceForSshExecution(input: {
     localDir: input.localDir,
     remoteDir,
     exclude: [".paperclip-runtime"],
+    onProgress: input.onProgress,
+    progressLabel: "workspace",
   });
   return { gitBacked: false };
 }
@@ -1274,6 +1503,7 @@ export async function restoreWorkspaceFromSshExecution(input: {
   remoteDir?: string;
   baselineSnapshot?: DirectorySnapshot;
   restoreGitHistory?: boolean;
+  onProgress?: RuntimeProgressSink;
 }): Promise<void> {
   const remoteDir = input.remoteDir ?? input.spec.remoteCwd;
   if (input.baselineSnapshot) {
@@ -1289,6 +1519,7 @@ export async function restoreWorkspaceFromSshExecution(input: {
           localDir: input.localDir,
           importedRef: importedRef ?? undefined,
           resetLocalWorkspace: false,
+          onProgress: input.onProgress,
         })
         : null;
       await syncDirectoryFromSsh({
@@ -1296,6 +1527,8 @@ export async function restoreWorkspaceFromSshExecution(input: {
         remoteDir,
         localDir: stagingDir,
         exclude: input.baselineSnapshot.exclude,
+        onProgress: input.onProgress,
+        progressLabel: "workspace",
       });
       await mergeDirectoryWithBaseline({
         baseline: input.baselineSnapshot,
@@ -1330,6 +1563,7 @@ export async function restoreWorkspaceFromSshExecution(input: {
       spec: input.spec,
       remoteDir,
       localDir: input.localDir,
+      onProgress: input.onProgress,
     });
     await syncDirectoryFromSsh({
       spec: input.spec,
@@ -1337,6 +1571,8 @@ export async function restoreWorkspaceFromSshExecution(input: {
       localDir: input.localDir,
       exclude: [".git", ".paperclip-runtime"],
       preserveLocalEntries: [".git"],
+      onProgress: input.onProgress,
+      progressLabel: "workspace",
     });
     return;
   }
@@ -1346,6 +1582,8 @@ export async function restoreWorkspaceFromSshExecution(input: {
     remoteDir,
     localDir: input.localDir,
     exclude: [".paperclip-runtime"],
+    onProgress: input.onProgress,
+    progressLabel: "workspace",
   });
 }
 
