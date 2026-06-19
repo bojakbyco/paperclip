@@ -71,6 +71,37 @@ describe("pipeline stage variable schema", () => {
     ).toBe(true);
   });
 
+  it("accepts versioned breakdown carry-over policy", () => {
+    expect(
+      pipelineStageConfigSchema.safeParse({
+        variables: [],
+        breakdown: {
+          targetPipelineId: "11111111-1111-4111-8111-111111111111",
+          targetStageKey: "intake",
+          carryOverPolicy: {
+            version: 1,
+            mode: "all_except",
+            excludeFields: ["title", "internalNote"],
+          },
+        },
+      }).success,
+    ).toBe(true);
+
+    expect(
+      pipelineStageConfigSchema.safeParse({
+        variables: [],
+        breakdown: {
+          targetPipelineId: "11111111-1111-4111-8111-111111111111",
+          targetStageKey: "intake",
+          carryOverPolicy: {
+            version: 2,
+            mode: "all_except",
+          },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects an onEnter run_routine action without a valid routine id", () => {
     expect(
       pipelineStageConfigSchema.safeParse({

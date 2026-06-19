@@ -1480,6 +1480,191 @@ describeEmbeddedPostgres("pipelineService", () => {
     expect(afterRetry!.childCount).toBe(1);
   });
 
+  it("carries source and ancestor fields with all-except defaults, pass-through, identity exclusions, and nearest-source conflict wins", async () => {
+    const company = await seedCompany();
+    const leaf = await svc.createPipeline({
+      companyId: company.id,
+      key: "leaf-tasks",
+      name: "Leaf tasks",
+      actor: userActor,
+      stages: [
+        {
+          key: "intake",
+          name: "Intake",
+          kind: "open",
+          config: {
+            variables: [
+              { name: "releaseTag", label: "Release tag", type: "select", options: ["2.0"], required: true },
+              { name: "owner", label: "Owner", type: "text" },
+              { name: "scope", label: "Scope", type: "text" },
+            ],
+          },
+        },
+        { key: "done", name: "Done", kind: "done" },
+        { key: "cancelled", name: "Cancelled", kind: "cancelled" },
+      ],
+    });
+    const target = await svc.createPipeline({
+      companyId: company.id,
+      key: "features-source-carry",
+      name: "Features",
+      actor: userActor,
+      stages: [
+        {
+          key: "intake",
+          name: "Intake",
+          kind: "open",
+          config: {
+            variables: [
+              { name: "releaseTag", label: "Release tag", type: "select", options: ["2.0"], required: true },
+              { name: "owner", label: "Owner", type: "text" },
+              { name: "scope", label: "Scope", type: "text" },
+              { name: "risk", label: "Risk", type: "select", options: ["low", "high"], required: true },
+              { name: "title", label: "Title", type: "text" },
+              { name: "name", label: "Name", type: "text" },
+            ],
+            breakdown: {
+              targetPipelineId: leaf.id,
+              targetStageKey: "intake",
+              pieceNoun: "subtask",
+              carryOverPolicy: { version: 1, mode: "all_except", excludeFields: ["risk", "internalNote"] },
+            },
+          },
+        },
+        { key: "done", name: "Done", kind: "done" },
+        { key: "cancelled", name: "Cancelled", kind: "cancelled" },
+      ],
+    });
+    const source = await svc.createPipeline({
+      companyId: company.id,
+      key: "release-source-carry",
+      name: "Release",
+      actor: userActor,
+      stages: [
+        {
+          key: "planning",
+          name: "Planning",
+          kind: "open",
+          config: {
+            breakdown: {
+              targetPipelineId: target.id,
+              targetStageKey: "intake",
+              pieceNoun: "feature",
+              carryOverPolicy: { version: 1, mode: "all_except", excludeFields: ["internalNote"] },
+            },
+          },
+        },
+        { key: "done", name: "Done", kind: "done" },
+        { key: "cancelled", name: "Cancelled", kind: "cancelled" },
+      ],
+    });
+    const grandparent = await svc.ingestCase({
+      companyId: company.id,
+      pipelineId: source.id,
+      caseKey: "release-grandparent",
+      title: "Release grandparent",
+      fields: { releaseTag: "1.0", owner: "platform", title: "Do not copy", name: "Do not copy", internalNote: "secret" },
+      actor: userActor,
+    });
+    const parent = await svc.ingestCase({
+      companyId: company.id,
+      pipelineId: source.id,
+      caseKey: "release-parent",
+      title: "Release parent",
+      parentCaseId: grandparent.case.id,
+      fields: { releaseTag: "2.0", scope: "backend" },
+      actor: userActor,
+    });
+
+    const first = await svc.breakdownCase({
+      companyId: company.id,
+      caseId: parent.case.id,
+      items: [{ key: "api", title: "API", fields: { risk: "high" } }],
+      actor: userActor,
+    });
+    const feature = first.items[0]!.ok ? first.items[0]!.case : null;
+    expect(feature?.fields).toEqual({
+      releaseTag: "2.0",
+      owner: "platform",
+      scope: "backend",
+      risk: "high",
+    });
+
+    const second = await svc.breakdownCase({
+      companyId: company.id,
+      caseId: feature!.id,
+      items: [{ key: "implementation", title: "Implementation" }],
+      actor: userActor,
+    });
+    const subtask = second.items[0]!.ok ? second.items[0]!.case : null;
+    expect(subtask?.fields).toEqual({
+      releaseTag: "2.0",
+      owner: "platform",
+      scope: "backend",
+    });
+  });
+
+  it("validates carried source values against the destination intake fields", async () => {
+    const company = await seedCompany();
+    const target = await svc.createPipeline({
+      companyId: company.id,
+      key: "validated-carry-target",
+      name: "Validated Carry Target",
+      actor: userActor,
+      stages: [
+        {
+          key: "intake",
+          name: "Intake",
+          kind: "open",
+          config: {
+            variables: [
+              { name: "releaseTag", label: "Release tag", type: "select", options: ["2.0"], required: true },
+            ],
+          },
+        },
+        { key: "done", name: "Done", kind: "done" },
+        { key: "cancelled", name: "Cancelled", kind: "cancelled" },
+      ],
+    });
+    const source = await svc.createPipeline({
+      companyId: company.id,
+      key: "validated-carry-source",
+      name: "Validated Carry Source",
+      actor: userActor,
+      stages: [
+        {
+          key: "planning",
+          name: "Planning",
+          kind: "open",
+          config: {
+            breakdown: {
+              targetPipelineId: target.id,
+              targetStageKey: "intake",
+              carryOverPolicy: { version: 1, mode: "all_except", excludeFields: [] },
+            },
+          },
+        },
+        { key: "done", name: "Done", kind: "done" },
+        { key: "cancelled", name: "Cancelled", kind: "cancelled" },
+      ],
+    });
+    const parent = await svc.ingestCase({
+      companyId: company.id,
+      pipelineId: source.id,
+      caseKey: "bad-release-tag",
+      title: "Bad release tag",
+      fields: { releaseTag: "1.0" },
+      actor: userActor,
+    });
+
+    await expect(svc.breakdownCase({
+      companyId: company.id,
+      caseId: parent.case.id,
+      items: [{ key: "api", title: "API" }],
+      actor: userActor,
+    })).rejects.toMatchObject({ status: 422, details: { code: "invalid_select_value", fieldKey: "releaseTag" } });
+  });
+
   it("lets an explicit zero-piece breakdown pass the children gate and auto-advance", async () => {
     const company = await seedCompany();
     const target = await svc.createPipeline({ companyId: company.id, key: "empty-target", name: "Empty target", actor: userActor });

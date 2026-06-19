@@ -24,10 +24,18 @@ export const pipelineStageOnEnterSchema = z.object({
   id: z.string().trim().min(1).max(200).optional(),
 }).passthrough();
 
+export const pipelineStageCarryOverPolicySchema = z.object({
+  version: z.literal(1).default(1),
+  mode: z.enum(["all_except", "only"]).default("all_except"),
+  includeFields: z.array(routineVariableLikeNameSchema).max(100).default([]),
+  excludeFields: z.array(routineVariableLikeNameSchema).max(100).default([]),
+});
+
 export const pipelineStageBreakdownSchema = z.object({
   targetPipelineId: z.string().uuid(),
   targetStageKey: z.string().trim().min(1).max(120),
   pieceNoun: z.string().trim().min(1).max(80).default("piece"),
+  carryOverPolicy: pipelineStageCarryOverPolicySchema.optional(),
   inheritFields: z.array(routineVariableLikeNameSchema).max(100).default([]),
   advanceTo: z.string().trim().min(1).max(120).optional(),
   waitForPieces: z.boolean().optional().default(false),
@@ -118,6 +126,7 @@ export const pipelineAutomationRetryRequestSchema = z.object({
 export type PipelineStageKind = z.infer<typeof pipelineStageKindSchema>;
 export type PipelineStageApprover = z.infer<typeof pipelineStageApproverSchema>;
 export type PipelineStageOnEnter = z.infer<typeof pipelineStageOnEnterSchema>;
+export type PipelineStageCarryOverPolicy = z.infer<typeof pipelineStageCarryOverPolicySchema>;
 export type PipelineStageBreakdown = z.infer<typeof pipelineStageBreakdownSchema>;
 export type PipelineStageVariable = z.infer<typeof pipelineStageVariableSchema>;
 export type PipelineStageConfig = z.infer<typeof pipelineStageConfigSchema>;

@@ -119,6 +119,7 @@ export type PipelineStageConfig = Record<string, unknown> & {
     targetPipelineId?: unknown;
     targetStageKey?: unknown;
     pieceNoun?: unknown;
+    carryOverPolicy?: unknown;
     inheritFields?: unknown;
     advanceTo?: unknown;
     waitForPieces?: unknown;
@@ -477,10 +478,18 @@ export interface PipelineBreakdownConfig {
   targetPipelineId: string;
   targetStageKey: string;
   pieceNoun: string;
+  carryOverPolicy: PipelineCarryOverPolicy;
   inheritFields: string[];
   advanceTo: string | null;
   waitForPieces: boolean;
   whenFinishedMoveTo: string | null;
+}
+
+export interface PipelineCarryOverPolicy {
+  version: 1;
+  mode: "all_except" | "only";
+  includeFields: string[];
+  excludeFields: string[];
 }
 
 function readOptionalStageKey(value: unknown, label: string) {
@@ -506,6 +515,53 @@ function readStringList(value: unknown, label: string) {
   });
 }
 
+function readBreakdownCarryOverPolicy(raw: NonNullable<PipelineStageConfig["breakdown"]>): PipelineCarryOverPolicy {
+  const policy = raw.carryOverPolicy;
+  if (policy !== undefined && policy !== null) {
+    if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
+      throw unprocessable("Breakdown carryOverPolicy must be an object", { code: "validation" });
+    }
+    const record = policy as Record<string, unknown>;
+    const version = record.version ?? 1;
+    if (version !== 1) {
+      throw unprocessable("Breakdown carryOverPolicy version is unsupported", {
+        code: "validation",
+        version,
+      });
+    }
+    const mode = record.mode ?? "all_except";
+    if (mode !== "all_except" && mode !== "only") {
+      throw unprocessable("Breakdown carryOverPolicy mode must be all_except or only", { code: "validation" });
+    }
+    return {
+      version: 1,
+      mode,
+      includeFields: readStringList(record.includeFields, "Breakdown carryOverPolicy includeFields"),
+      excludeFields: readStringList(record.excludeFields, "Breakdown carryOverPolicy excludeFields"),
+    };
+  }
+  return {
+    version: 1,
+    mode: "only",
+    includeFields: readStringList(raw.inheritFields, "Breakdown inheritFields"),
+    excludeFields: [],
+  };
+}
+
+function isCarryOverIdentityFieldKey(key: string) {
+  const normalized = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
+  return normalized === "name" ||
+    normalized === "title" ||
+    normalized === "casename" ||
+    normalized === "casetitle";
+}
+
+function shouldCarryOverField(policy: PipelineCarryOverPolicy, key: string) {
+  if (isCarryOverIdentityFieldKey(key)) return false;
+  if (policy.mode === "only") return policy.includeFields.includes(key);
+  return !policy.excludeFields.includes(key);
+}
+
 function readBreakdownConfig(config?: PipelineStageConfig | null): PipelineBreakdownConfig | null {
   const raw = config?.breakdown;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -527,11 +583,13 @@ function readBreakdownConfig(config?: PipelineStageConfig | null): PipelineBreak
     raw.whenFinishedMoveTo ?? config?.autoAdvanceOnChildrenTerminal,
     "Breakdown whenFinishedMoveTo",
   );
+  const carryOverPolicy = readBreakdownCarryOverPolicy(raw);
   return {
     targetPipelineId,
     targetStageKey,
     pieceNoun,
-    inheritFields: readStringList(raw.inheritFields, "Breakdown inheritFields"),
+    carryOverPolicy,
+    inheritFields: carryOverPolicy.mode === "only" ? carryOverPolicy.includeFields : [],
     advanceTo: readOptionalStageKey(raw.advanceTo, "Breakdown advanceTo"),
     waitForPieces,
     whenFinishedMoveTo,
@@ -663,6 +721,7 @@ function normalizeStageConfig(kind: PipelineStageKind | string, config?: Pipelin
       targetPipelineId: breakdown!.targetPipelineId,
       targetStageKey: breakdown!.targetStageKey,
       pieceNoun: breakdown!.pieceNoun,
+      carryOverPolicy: breakdown!.carryOverPolicy,
       inheritFields: breakdown!.inheritFields,
       ...(breakdown!.advanceTo ? { advanceTo: breakdown!.advanceTo } : {}),
       waitForPieces: breakdown!.waitForPieces,
@@ -1923,16 +1982,22 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
     });
   }
 
-  function inheritedBreakdownFields(
-    parent: typeof pipelineCases.$inferSelect,
+  async function inheritedBreakdownFields(
+    dbOrTx: PipelineDb,
+    companyId: string,
+    current: typeof pipelineCases.$inferSelect,
     config: PipelineBreakdownConfig,
   ) {
-    const source = parent.fields && typeof parent.fields === "object" && !Array.isArray(parent.fields)
-      ? parent.fields as Record<string, unknown>
-      : {};
+    const ancestors = await getAncestorCases(dbOrTx, companyId, current.parentCaseId);
+    const sources = [...ancestors].reverse().map((ancestor) => ancestor.case).concat(current);
     const inherited: Record<string, unknown> = {};
-    for (const key of config.inheritFields) {
-      if (Object.prototype.hasOwnProperty.call(source, key)) inherited[key] = source[key];
+    for (const sourceCase of sources) {
+      const source = sourceCase.fields && typeof sourceCase.fields === "object" && !Array.isArray(sourceCase.fields)
+        ? sourceCase.fields as Record<string, unknown>
+        : {};
+      for (const [key, value] of Object.entries(source)) {
+        if (shouldCarryOverField(config.carryOverPolicy, key)) inherited[key] = value;
+      }
     }
     return inherited;
   }
@@ -2009,11 +2074,13 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
     const targetPipelineId = typeof config.targetPipelineId === "string" ? config.targetPipelineId : null;
     const targetStageKey = typeof config.targetStageKey === "string" ? config.targetStageKey : null;
     if (!targetPipelineId || !targetStageKey) return null;
+    const carryOverPolicy = readBreakdownCarryOverPolicy(config as NonNullable<PipelineStageConfig["breakdown"]>);
     return {
       targetPipelineId,
       targetStageKey,
       pieceNoun: typeof config.pieceNoun === "string" && config.pieceNoun.trim() ? config.pieceNoun.trim() : "piece",
-      inheritFields: readStringList(config.inheritFields, "Breakdown inheritFields"),
+      carryOverPolicy,
+      inheritFields: carryOverPolicy.mode === "only" ? carryOverPolicy.includeFields : [],
       advanceTo: null,
       waitForPieces: config.waitForPieces === true,
       whenFinishedMoveTo: typeof config.whenFinishedMoveTo === "string" && config.whenFinishedMoveTo.trim()
@@ -3716,7 +3783,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       const { targetPipeline, targetStage } = await loadBreakdownTarget(db, input.companyId, config);
       assertStageEnabled(targetStage, "breakdown");
       const seenKeys = new Set<string>();
-      const inheritedFields = inheritedBreakdownFields(detail.case, config);
+      const inheritedFields = await inheritedBreakdownFields(db, input.companyId, detail.case, config);
       const items = input.items.map((item) => {
         const key = item.key.trim();
         if (!key) throw unprocessable("Breakdown item key is required", { code: "validation" });
