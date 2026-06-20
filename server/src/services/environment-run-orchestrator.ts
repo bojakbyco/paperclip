@@ -182,12 +182,6 @@ export function environmentRunOrchestrator(
       });
     }
 
-    if (environment.companyId !== input.companyId) {
-      throw new EnvironmentRunError("environment_not_found", `Environment "${environmentId}" does not belong to this company.`, {
-        environmentId,
-      });
-    }
-
     if (environment.status !== "active") {
       throw new EnvironmentRunError("environment_inactive", `Environment "${environment.name}" is not active (status: ${environment.status}).`, {
         environmentId: environment.id,

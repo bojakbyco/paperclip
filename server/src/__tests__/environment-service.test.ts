@@ -69,11 +69,15 @@ describeEmbeddedPostgres("environmentService leases", () => {
     });
     await db.insert(environments).values({
       id: environmentId,
-      companyId,
-      name: "Local",
-      driver: "local",
+      name: "Lease Fixture",
+      driver: "ssh",
       status: "active",
-      config: {},
+      config: {
+        host: "fixture.example.test",
+        port: 22,
+        username: "fixture",
+        remoteWorkspacePath: "/srv/paperclip",
+      },
       createdAt: new Date(),
       updatedAt: new Date(),
     });
@@ -158,7 +162,7 @@ describeEmbeddedPostgres("environmentService leases", () => {
     expect(created.driver).toBe("local");
     expect(reused.id).toBe(created.id);
 
-    const rows = await db.select().from(environments).where(eq(environments.companyId, companyId));
+    const rows = await db.select().from(environments).where(eq(environments.driver, "local"));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.name).toBe("Local");
   });
@@ -176,7 +180,6 @@ describeEmbeddedPostgres("environmentService leases", () => {
     const [existing] = await db
       .insert(environments)
       .values({
-        companyId,
         name: "Archived Local",
         description: "Operator-managed local environment",
         driver: "local",
@@ -195,7 +198,7 @@ describeEmbeddedPostgres("environmentService leases", () => {
     expect(ensured.status).toBe("archived");
     expect(ensured.metadata).toEqual({ owner: "operator" });
 
-    const rows = await db.select().from(environments).where(eq(environments.companyId, companyId));
+    const rows = await db.select().from(environments).where(eq(environments.driver, "local"));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.updatedAt.toISOString()).toBe(archivedAt.toISOString());
   });
@@ -216,7 +219,7 @@ describeEmbeddedPostgres("environmentService leases", () => {
 
     expect(new Set(results.map((environment) => environment.id)).size).toBe(1);
 
-    const rows = await db.select().from(environments).where(eq(environments.companyId, companyId));
+    const rows = await db.select().from(environments).where(eq(environments.driver, "local"));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.driver).toBe("local");
     expect(rows[0]?.status).toBe("active");
@@ -268,7 +271,7 @@ describeEmbeddedPostgres("environmentService leases", () => {
     const rows = await db
       .select()
       .from(environments)
-      .where(eq(environments.companyId, companyId));
+      .where(eq(environments.driver, "sandbox"));
     expect(rows.filter((row) => row.driver === "sandbox")).toHaveLength(1);
   });
 
@@ -295,7 +298,7 @@ describeEmbeddedPostgres("environmentService leases", () => {
     const rows = await db
       .select()
       .from(environments)
-      .where(and(eq(environments.companyId, companyId), eq(environments.driver, "sandbox")));
+      .where(eq(environments.driver, "sandbox"));
     expect(rows).toHaveLength(1);
     expect((rows[0]?.metadata as Record<string, unknown>)?.managedKubernetesSandbox).toBe(true);
   });
@@ -312,7 +315,6 @@ describeEmbeddedPostgres("environmentService leases", () => {
 
     const now = new Date();
     await db.insert(environments).values({
-      companyId,
       name: "First",
       driver: "sandbox",
       status: "active",
@@ -327,7 +329,6 @@ describeEmbeddedPostgres("environmentService leases", () => {
     // same company. This is the DB-level invariant that replaced the previous
     // application-side post-insert convergence loop.
     const secondInsert = db.insert(environments).values({
-      companyId,
       name: "Second",
       driver: "sandbox",
       status: "active",
@@ -346,12 +347,11 @@ describeEmbeddedPostgres("environmentService leases", () => {
         (error as { cause?: { constraint_name?: string } })?.cause?.constraint_name ??
         "unknown";
     }
-    expect(raisedConstraint).toBe("environments_company_managed_sandbox_idx");
+    expect(raisedConstraint).toBe("environments_managed_sandbox_idx");
 
     // Index does NOT cover tenant-created sandbox rows (no managedByPaperclip
     // marker) — operators must be able to keep multiple tenant sandbox envs.
     await db.insert(environments).values({
-      companyId,
       name: "Tenant Sandbox",
       driver: "sandbox",
       status: "active",
@@ -364,7 +364,7 @@ describeEmbeddedPostgres("environmentService leases", () => {
     const rows = await db
       .select()
       .from(environments)
-      .where(and(eq(environments.companyId, companyId), eq(environments.driver, "sandbox")));
+      .where(eq(environments.driver, "sandbox"));
     expect(rows).toHaveLength(2);
   });
 
@@ -441,7 +441,7 @@ describeEmbeddedPostgres("environmentService leases", () => {
 
     expect(first.id).not.toBe(second.id);
 
-    const rows = await db.select().from(environments).where(eq(environments.companyId, companyId));
+    const rows = await db.select().from(environments);
     expect(rows.filter((row) => row.driver === "ssh")).toHaveLength(2);
   });
 });
