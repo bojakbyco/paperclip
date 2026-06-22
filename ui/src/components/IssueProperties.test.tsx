@@ -1798,7 +1798,7 @@ describe("IssueProperties", () => {
     act(() => root.unmount());
   });
 
-  it("uses external object display metadata for the properties row label", async () => {
+  it("renders each external object as its own properties row using display metadata", async () => {
     const root = renderProperties(container, {
       issue: createIssue(),
       childIssues: [],
@@ -1827,12 +1827,36 @@ describe("IssueProperties", () => {
             sourceLabels: ["Description"],
           },
         },
+        {
+          mentionCount: 1,
+          sourceLabels: ["Comment"],
+          pill: {
+            providerKey: "github",
+            objectType: "issue",
+            displayKey: "Github Issue",
+            iconKey: "github",
+            statusCategory: "open",
+            statusIconKey: "circle-dot",
+            statusLabel: "Open",
+            liveness: "fresh",
+            displayTitle: "acme/web#12: Follow-up",
+            url: "https://github.com/acme/web/issues/12",
+          },
+          group: {
+            object: null,
+            mentions: [],
+            mentionCount: 1,
+            sourceLabels: ["Comment"],
+          },
+        },
       ],
     });
     await flush();
 
     expect(container.textContent).toContain("Github Pull Request");
+    expect(container.textContent).toContain("Github Issue");
     expect(container.textContent).toContain("Merged");
+    expect(container.textContent).toContain("Open");
     expect(container.textContent).not.toContain("External objects");
     const label = Array.from(container.querySelectorAll("span"))
       .find((span) => span.textContent === "Github Pull Request");
