@@ -63,6 +63,9 @@ describe("CommentThread external object decoration (integration)", () => {
                   issueId: "issue-1",
                   authorAgentId: null,
                   authorUserId: "user-1",
+                  authorType: "user",
+                  presentation: null,
+                  metadata: null,
                   body: [
                     "Tracked: https://github.com/example/repo/pull/77",
                     "Untracked: https://elsewhere.example.com/page",

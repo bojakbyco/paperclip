@@ -234,7 +234,6 @@ function SortableProjectItem(props: ProjectItemProps) {
     transition,
     isDragging,
   } = useSortable({ id: props.project.id });
-  } = useSortable({ id: props.project.id });
 
   return (
     <div

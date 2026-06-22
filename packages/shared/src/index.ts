@@ -847,11 +847,6 @@ export {
 } from "./document-anchors.js";
 
 export {
-  buildExternalObjectScopedIdentityKey,
-  buildExternalObjectMentionSourceKey,
-  canonicalizeExternalObjectUrl,
-  extractExternalObjectCanonicalUrls,
-  findExternalObjectUrlMatches,
   formatExternalObjectMentionSourceLabel,
   type ExternalObjectCanonicalIdentity,
   type ExternalObjectCanonicalUrl,

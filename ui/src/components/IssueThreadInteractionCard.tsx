@@ -1997,7 +1997,6 @@ export function IssueThreadInteractionCard({
             onAcceptInteraction={onAcceptInteraction}
             onRejectInteraction={onRejectInteraction}
             onUploadImage={onUploadImage}
-            onUploadImage={onUploadImage}
             externalReferences={externalReferences}
           />
         )}

@@ -14,6 +14,7 @@ const mockIssueService = vi.hoisted(() => ({
 }));
 
 const mockAccessService = vi.hoisted(() => ({
+  decide: vi.fn(),
   hasPermission: vi.fn(),
 }));
 
@@ -40,9 +41,20 @@ function registerRouteMocks() {
     instanceSettingsService: () => mockInstanceSettingsService,
   }));
 
+  vi.doMock("../services/task-watchdog-scope.js", () => ({
+    TASK_WATCHDOG_ORIGIN_KIND: "task_watchdog",
+    resolveTaskWatchdogMutationScope: vi.fn(async () => ({ kind: "none" })),
+    taskWatchdogScopeAllowsIssueMutation: vi.fn(async () => ({ kind: "none" })),
+  }));
+
   vi.doMock("../services/index.js", () => ({
     accessService: () => mockAccessService,
     agentService: () => mockAgentService,
+    companyService: () => ({
+      getById: vi.fn(async () => null),
+    }),
+    companySearchService: () => ({}),
+    documentAnnotationService: () => ({}),
     documentService: () => ({}),
     executionWorkspaceService: () => ({}),
     feedbackService: () => ({}),
@@ -55,6 +67,7 @@ function registerRouteMocks() {
       cancelRun: vi.fn(async () => null),
     }),
     issueApprovalService: () => ({}),
+    issueRecoveryActionService: () => ({}),
     issueReferenceService: () => ({
       listIssueReferenceSummary: async () => ({ outbound: [], inbound: [] }),
     }),
@@ -147,6 +160,10 @@ describe("external object routes", () => {
     mockIssueService.getById.mockResolvedValue(makeIssue());
     mockIssueService.assertCheckoutOwner.mockResolvedValue({ adoptedFromRunId: null });
     mockAccessService.hasPermission.mockResolvedValue(false);
+    mockAccessService.decide.mockImplementation(async ({ action }: { action: string }) => ({
+      allowed: action === "issue:mutate",
+      explanation: "Denied by test mock",
+    }));
     mockAgentService.list.mockResolvedValue([
       { id: ownerAgentId, companyId, reportsTo: null, permissions: { canCreateAgents: false } },
       { id: peerAgentId, companyId, reportsTo: null, permissions: { canCreateAgents: false } },
