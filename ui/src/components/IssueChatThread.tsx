@@ -4170,6 +4170,8 @@ export function IssueChatThread({
         status: activeRun.status,
         invocationSource: activeRun.invocationSource,
         triggerDetail: activeRun.triggerDetail,
+        contextCommentId: activeRun.contextCommentId,
+        contextWakeCommentId: activeRun.contextWakeCommentId,
         startedAt: toIsoString(activeRun.startedAt),
         finishedAt: toIsoString(activeRun.finishedAt),
         createdAt: toIsoString(activeRun.createdAt) ?? new Date().toISOString(),
@@ -4178,6 +4180,13 @@ export function IssueChatThread({
         adapterType: activeRun.adapterType,
         logBytes: activeRun.logBytes,
         lastOutputBytes: activeRun.lastOutputBytes,
+        issueId: activeRun.issueId,
+        livenessState: activeRun.livenessState,
+        livenessReason: activeRun.livenessReason,
+        continuationAttempt: activeRun.continuationAttempt,
+        lastUsefulActionAt: toIsoString(activeRun.lastUsefulActionAt),
+        nextAction: activeRun.nextAction,
+        outputSilence: activeRun.outputSilence,
       });
     }
     return [...deduped.values()].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
