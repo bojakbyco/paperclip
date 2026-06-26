@@ -124,7 +124,7 @@ jobs:
             ${{ runner.temp }}/paperclip-health.json
             ${{ runner.temp }}/paperclip-company.json
             ${{ runner.temp }}/hermes-gateway-e2e.log
-            ${{ runner.temp }}/hermes-gateway-diag/
+            ${{ env.HERMES_SMOKE_DIAG_DIR }}/
           retention-days: 14
           if-no-files-found: ignore
 

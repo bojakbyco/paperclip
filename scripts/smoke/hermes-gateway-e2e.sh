@@ -462,7 +462,9 @@ prepare_fresh_state() {
     "${HERMES_SMOKE_STATE_DIR}/hermes-home" \
     "${HERMES_SMOKE_STATE_DIR}/workspace" \
     "${HERMES_SMOKE_STATE_DIR}/fake-host-home/.hermes"
-  chmod 700 "${HERMES_SMOKE_STATE_DIR}/hermes-home" "${HERMES_SMOKE_STATE_DIR}/workspace" || true
+  # These host-created bind mounts must be readable and writable by the
+  # non-root hermes user (uid 10001) inside the container.
+  chmod 777 "${HERMES_SMOKE_STATE_DIR}/hermes-home" "${HERMES_SMOKE_STATE_DIR}/workspace" || true
   echo "host hermes sentinel ${RUN_SUFFIX}" > "${HERMES_SMOKE_STATE_DIR}/fake-host-home/.hermes/host-sentinel.txt"
 
   if find "${HERMES_SMOKE_STATE_DIR}/hermes-home" -mindepth 1 -print -quit | grep -q .; then
