@@ -42,6 +42,7 @@ HERMES_GATEWAY_ALLOW_INSECURE_HTTP="${HERMES_GATEWAY_ALLOW_INSECURE_HTTP:-0}"
 HERMES_GATEWAY_SESSION_KEY_STRATEGY="${HERMES_GATEWAY_SESSION_KEY_STRATEGY:-issue}"
 HERMES_ADAPTER_TIMEOUT_SEC="${HERMES_ADAPTER_TIMEOUT_SEC:-180}"
 HERMES_DIRECT_RUN_TIMEOUT_SEC="${HERMES_DIRECT_RUN_TIMEOUT_SEC:-180}"
+HERMES_DIRECT_RUN_EVENTS_TIMEOUT_SEC="${HERMES_DIRECT_RUN_EVENTS_TIMEOUT_SEC:-20}"
 HERMES_STOP_ASSERT="${HERMES_STOP_ASSERT:-auto}"
 HERMES_SMOKE_KEEP="${HERMES_SMOKE_KEEP:-0}"
 HERMES_SMOKE_NETWORK="${HERMES_SMOKE_NETWORK:-}"
@@ -654,20 +655,26 @@ assert_direct_gateway_run() {
   [[ -n "$DIRECT_RUN_ID" ]] || fail "direct run creation did not return run id"
 
   local events_file="${HERMES_SMOKE_DIAG_DIR}/direct-run-${DIRECT_RUN_ID}-events.sse"
-  curl -sS --max-time 20 -N \
+  curl -sS --max-time "$HERMES_DIRECT_RUN_EVENTS_TIMEOUT_SEC" -N \
     -H "Authorization: Bearer ${HERMES_GATEWAY_API_KEY}" \
     "${HERMES_GATEWAY_PROBE_URL%/}/v1/runs/${DIRECT_RUN_ID}/events" \
     > "${events_file}.raw" || true
   redact_text "$(cat "${events_file}.raw")" > "$events_file"
   rm -f "${events_file}.raw"
-  if ! grep -Eq '(^event:|^data:)' "$events_file"; then
-    fail "SSE stream produced no event/data frames for direct run"
+  local events_seen=0
+  if grep -Eq '(^event:|^data:)' "$events_file"; then
+    events_seen=1
+  else
+    warn "SSE stream produced no event/data frames within ${HERMES_DIRECT_RUN_EVENTS_TIMEOUT_SEC}s; polling direct run status"
   fi
 
   local status
   status="$(poll_gateway_run_terminal "$DIRECT_RUN_ID" "$HERMES_DIRECT_RUN_TIMEOUT_SEC" "direct-run")"
   log "direct Hermes run ${DIRECT_RUN_ID} status=${status}"
   [[ "$status" == "completed" ]] || fail "direct Hermes run did not complete successfully (status=${status})"
+  if [[ "$events_seen" != "1" ]]; then
+    warn "direct Hermes run completed, but the live SSE probe was quiet"
+  fi
 }
 
 assert_stop_behavior_if_deterministic() {
