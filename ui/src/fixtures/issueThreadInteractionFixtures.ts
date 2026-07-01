@@ -116,7 +116,7 @@ function createAskUserQuestionsInteraction(
     kind: "ask_user_questions",
     title: "Resolve open UX decisions before Phase 1",
     summary:
-      "This form stays local until the operator submits it, so the assignee only wakes once after the whole answer set is ready.",
+      "This form stays local until the operator submits the whole answer set.",
     status: "pending",
     continuationPolicy: "wake_assignee",
     createdByAgentId: "agent-codex",
