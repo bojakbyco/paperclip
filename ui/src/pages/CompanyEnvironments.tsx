@@ -1,14 +1,14 @@
 import {
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
-  type ClipboardEvent as ReactClipboardEvent,
-  type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Play, RefreshCw, RotateCcw, Terminal, Trash2, X } from "lucide-react";
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal as XTermTerminal } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
 import {
   type EnvBinding,
   type Environment,
@@ -231,10 +231,7 @@ function setupConnectionFallbackMessage(input: {
 
 const CUSTOM_IMAGE_TERMINAL_COLS = 100;
 const CUSTOM_IMAGE_TERMINAL_ROWS = 28;
-const CUSTOM_IMAGE_TERMINAL_SCROLLBACK_LIMIT = 120_000;
-const TERMINAL_CONTROL_SEQUENCE_PATTERN =
-  // eslint-disable-next-line no-control-regex
-  /(?:\x1B\][\s\S]*?(?:\x07|\x1B\\))|(?:\x1B\[[0-?]*[ -/]*[@-~])|(?:\x1B[PX^_][\s\S]*?\x1B\\)|(?:\x1B[@-Z\\-_])/g;
+const CUSTOM_IMAGE_TERMINAL_SCROLLBACK_ROWS = 5_000;
 
 type CustomImageTerminalConnectionState =
   | "idle"
@@ -250,55 +247,6 @@ function appendTerminalQuery(path: string, params: Record<string, string | numbe
   ).toString()}`;
 }
 
-function appendTerminalOutput(current: string, chunk: string) {
-  const next = `${current}${chunk}`;
-  return next.length > CUSTOM_IMAGE_TERMINAL_SCROLLBACK_LIMIT
-    ? next.slice(-CUSTOM_IMAGE_TERMINAL_SCROLLBACK_LIMIT)
-    : next;
-}
-
-function renderTerminalOutput(raw: string) {
-  const cleaned = raw.replace(TERMINAL_CONTROL_SEQUENCE_PATTERN, "").replace(/\r\n/g, "\n");
-  const buffer: string[] = [];
-  let cursor = 0;
-  let lineStart = 0;
-
-  for (const char of cleaned) {
-    if (char === "\r") {
-      cursor = lineStart;
-      continue;
-    }
-
-    if (char === "\n") {
-      cursor = buffer.length;
-      buffer.push(char);
-      cursor += 1;
-      lineStart = cursor;
-      continue;
-    }
-
-    if (char === "\b" || char === "\x7f") {
-      if (cursor > lineStart) {
-        cursor -= 1;
-      }
-      continue;
-    }
-
-    if (char.charCodeAt(0) < 32 && char !== "\t") {
-      continue;
-    }
-
-    if (cursor >= buffer.length) {
-      buffer.push(char);
-    } else {
-      buffer[cursor] = char;
-    }
-    cursor += 1;
-  }
-
-  return buffer.join("");
-}
-
 function parseTerminalFrame(raw: string): Record<string, unknown> | null {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -307,45 +255,6 @@ function parseTerminalFrame(raw: string): Record<string, unknown> | null {
       : null;
   } catch {
     return null;
-  }
-}
-
-function terminalInputForKey(event: ReactKeyboardEvent<HTMLElement>): string | null {
-  if (event.metaKey || event.altKey) return null;
-
-  if (event.ctrlKey) {
-    const key = event.key.toLowerCase();
-    if (key.length === 1 && key >= "a" && key <= "z") {
-      return String.fromCharCode(key.charCodeAt(0) - 96);
-    }
-    return null;
-  }
-
-  switch (event.key) {
-    case "Enter":
-      return "\r";
-    case "Backspace":
-      return "\x7f";
-    case "Tab":
-      return "\t";
-    case "Escape":
-      return "\x1b";
-    case "ArrowUp":
-      return "\x1b[A";
-    case "ArrowDown":
-      return "\x1b[B";
-    case "ArrowRight":
-      return "\x1b[C";
-    case "ArrowLeft":
-      return "\x1b[D";
-    case "Home":
-      return "\x1b[H";
-    case "End":
-      return "\x1b[F";
-    case "Delete":
-      return "\x1b[3~";
-    default:
-      return event.key.length === 1 ? event.key : null;
   }
 }
 
@@ -373,11 +282,15 @@ function EnvironmentCustomImageBrowserTerminal({
   sessionId: string;
 }) {
   const [connectionState, setConnectionState] = useState<CustomImageTerminalConnectionState>("idle");
-  const [output, setOutput] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const terminalRef = useRef<HTMLTextAreaElement | null>(null);
+  const terminalElementRef = useRef<HTMLDivElement | null>(null);
+  const xtermRef = useRef<XTermTerminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const terminalInputDisposableRef = useRef<{ dispose: () => void } | null>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const autoConnectAttemptedSessionRef = useRef<string | null>(null);
+  const lastSentResizeRef = useRef<{ cols: number; rows: number } | null>(null);
 
   const closeSocket = useCallback((reason = "operator_closed") => {
     const socket = socketRef.current;
@@ -387,19 +300,118 @@ function EnvironmentCustomImageBrowserTerminal({
     }
   }, []);
 
+  const getTerminalDimensions = useCallback(() => {
+    const terminal = xtermRef.current;
+    return {
+      cols: terminal?.cols || CUSTOM_IMAGE_TERMINAL_COLS,
+      rows: terminal?.rows || CUSTOM_IMAGE_TERMINAL_ROWS,
+    };
+  }, []);
+
+  const sendTerminalResize = useCallback((force = false) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+    const dimensions = getTerminalDimensions();
+    const previous = lastSentResizeRef.current;
+    if (!force && previous?.cols === dimensions.cols && previous.rows === dimensions.rows) return;
+
+    lastSentResizeRef.current = dimensions;
+    socket.send(JSON.stringify({
+      type: "resize",
+      cols: dimensions.cols,
+      rows: dimensions.rows,
+    }));
+  }, [getTerminalDimensions]);
+
+  const fitTerminal = useCallback(() => {
+    const fitAddon = fitAddonRef.current;
+    if (!fitAddon || !xtermRef.current) return;
+    try {
+      fitAddon.fit();
+      sendTerminalResize();
+    } catch {
+      // The fit addon can throw during hidden/dialog layout transitions. The
+      // next ResizeObserver tick or reconnect will retry with stable dimensions.
+    }
+  }, [sendTerminalResize]);
+
+  const sendTerminalInput = useCallback((data: string) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify({ type: "input", data }));
+  }, []);
+
+  const resetTerminalScreen = useCallback(() => {
+    const terminal = xtermRef.current;
+    if (!terminal) return;
+    terminal.reset();
+    terminal.clear();
+  }, []);
+
+  useEffect(() => {
+    const element = terminalElementRef.current;
+    if (!element || xtermRef.current) return undefined;
+
+    const terminal = new XTermTerminal({
+      allowTransparency: true,
+      cols: CUSTOM_IMAGE_TERMINAL_COLS,
+      rows: CUSTOM_IMAGE_TERMINAL_ROWS,
+      convertEol: false,
+      cursorBlink: true,
+      cursorStyle: "block",
+      fontFamily: "Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+      fontSize: 12,
+      lineHeight: 1.35,
+      scrollback: CUSTOM_IMAGE_TERMINAL_SCROLLBACK_ROWS,
+      theme: {
+        background: "#0a0a0a",
+        foreground: "#f5f5f5",
+        cursor: "#f8fafc",
+        selectionBackground: "#2563eb55",
+      },
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(element);
+
+    xtermRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+    terminalInputDisposableRef.current = terminal.onData(sendTerminalInput);
+
+    if (typeof ResizeObserver !== "undefined") {
+      const resizeObserver = new ResizeObserver(() => fitTerminal());
+      resizeObserver.observe(element);
+      resizeObserverRef.current = resizeObserver;
+    }
+
+    window.setTimeout(fitTerminal, 0);
+
+    return () => {
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+      terminalInputDisposableRef.current?.dispose();
+      terminalInputDisposableRef.current = null;
+      fitAddonRef.current = null;
+      xtermRef.current = null;
+      terminal.dispose();
+    };
+  }, [fitTerminal, sendTerminalInput]);
+
   useEffect(() => () => closeSocket("component_unmounted"), [closeSocket]);
 
   useEffect(() => {
     closeSocket("session_changed");
     autoConnectAttemptedSessionRef.current = null;
+    lastSentResizeRef.current = null;
     setConnectionState("idle");
-    setOutput("");
     setErrorMessage(null);
-  }, [closeSocket, sessionId]);
+    resetTerminalScreen();
+  }, [closeSocket, resetTerminalScreen, sessionId]);
 
   useEffect(() => {
     if (connectionState === "connected") {
-      terminalRef.current?.focus();
+      xtermRef.current?.focus();
     }
   }, [connectionState]);
 
@@ -412,17 +424,25 @@ function EnvironmentCustomImageBrowserTerminal({
 
     closeSocket("reconnect");
     setConnectionState("connecting");
-    setOutput("");
+    lastSentResizeRef.current = null;
     setErrorMessage(null);
+    resetTerminalScreen();
 
     try {
+      fitTerminal();
+      const dimensions = getTerminalDimensions();
       const terminalToken = await environmentsApi.createCustomImageTerminalSessionToken(sessionId, {});
       const websocketPath = appendTerminalQuery(terminalToken.websocketPath, {
-        cols: CUSTOM_IMAGE_TERMINAL_COLS,
-        rows: CUSTOM_IMAGE_TERMINAL_ROWS,
+        cols: dimensions.cols,
+        rows: dimensions.rows,
       });
       const socket = new WebSocket(buildSameOriginWebSocketUrl(websocketPath));
       socketRef.current = socket;
+
+      socket.onopen = () => {
+        if (socketRef.current !== socket) return;
+        sendTerminalResize(true);
+      };
 
       socket.onmessage = (message) => {
         if (socketRef.current !== socket) return;
@@ -436,7 +456,7 @@ function EnvironmentCustomImageBrowserTerminal({
         }
 
         if (frame.type === "output" && typeof frame.data === "string") {
-          setOutput((current) => appendTerminalOutput(current, frame.data as string));
+          xtermRef.current?.write(frame.data as string);
           return;
         }
 
@@ -467,7 +487,7 @@ function EnvironmentCustomImageBrowserTerminal({
       setConnectionState("error");
       setErrorMessage(error instanceof Error ? error.message : "Terminal session could not be opened.");
     }
-  }, [closeSocket, sessionId]);
+  }, [closeSocket, fitTerminal, getTerminalDimensions, resetTerminalScreen, sendTerminalResize, sessionId]);
 
   useEffect(() => {
     if (!autoConnect || connectionState !== "idle") return;
@@ -479,43 +499,12 @@ function EnvironmentCustomImageBrowserTerminal({
     return () => window.clearTimeout(timeoutId);
   }, [autoConnect, connectTerminal, connectionState, sessionId]);
 
-  const sendTerminalInput = useCallback((data: string) => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
-    socket.send(JSON.stringify({ type: "input", data }));
-  }, []);
-
-  const handleTerminalKeyDown = useCallback((event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
-    const input = terminalInputForKey(event);
-    if (!input) return;
-    event.preventDefault();
-    sendTerminalInput(input);
-  }, [sendTerminalInput]);
-
-  const handleTerminalPaste = useCallback((event: ReactClipboardEvent<HTMLTextAreaElement>) => {
-    if (connectionState !== "connected") return;
-    const text = event.clipboardData.getData("text");
-    if (!text) return;
-    event.preventDefault();
-    sendTerminalInput(text.replace(/\r?\n/g, "\r"));
-  }, [connectionState, sendTerminalInput]);
-
   const disconnectTerminal = useCallback(() => {
     closeSocket("operator_closed");
     setConnectionState("closed");
   }, [closeSocket]);
 
   const terminalInteractive = connectionState === "connected";
-  const terminalDisplay = useMemo(
-    () => output ? renderTerminalOutput(output) : customImageTerminalStatusCopy(connectionState),
-    [connectionState, output],
-  );
-
-  useEffect(() => {
-    const terminal = terminalRef.current;
-    if (!terminal) return;
-    terminal.scrollTop = terminal.scrollHeight;
-  }, [terminalDisplay]);
 
   return (
     <div className="mt-3 rounded-md border border-border/70 bg-background" data-testid={`custom-image-terminal-${sessionId}`}>
@@ -543,23 +532,15 @@ function EnvironmentCustomImageBrowserTerminal({
           )}
         </div>
       </div>
-      <div
-        className="bg-neutral-950"
-      >
-        <textarea
-          ref={terminalRef}
-          data-testid={`custom-image-terminal-input-${sessionId}`}
+      <div className="bg-neutral-950 p-2 focus-within:ring-2 focus-within:ring-ring">
+        <div
+          ref={terminalElementRef}
+          data-testid={`custom-image-terminal-screen-${sessionId}`}
           aria-label="Custom image browser terminal"
-          aria-multiline="true"
-          aria-readonly="true"
-          readOnly
-          spellCheck={false}
+          role="application"
           tabIndex={0}
-          value={terminalDisplay}
-          onKeyDown={handleTerminalKeyDown}
-          onPaste={handleTerminalPaste}
-          onClick={() => terminalRef.current?.focus()}
-          className="block min-h-[18rem] max-h-[26rem] w-full resize-none overflow-auto border-0 bg-neutral-950 px-3 py-2 font-mono text-[12px] leading-5 text-neutral-100 outline-none focus:ring-2 focus:ring-ring"
+          onClick={() => xtermRef.current?.focus()}
+          className="h-[18rem] w-full overflow-hidden bg-neutral-950 outline-none sm:h-[22rem] [&_.xterm-screen]:focus:outline-none [&_.xterm-viewport]:!overflow-y-auto"
         />
       </div>
       {errorMessage ? (

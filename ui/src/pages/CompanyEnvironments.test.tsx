@@ -6,6 +6,120 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { CompanyEnvironments } from "./CompanyEnvironments";
 
+const xtermMocks = vi.hoisted(() => {
+  class MockTerminal {
+    readonly options: Record<string, unknown>;
+    cols: number;
+    rows: number;
+    writes: string[] = [];
+    focused = false;
+    disposed = false;
+    openedElement: HTMLElement | null = null;
+    private readonly dataHandlers: Array<(data: string) => void> = [];
+
+    constructor(options: Record<string, unknown> = {}) {
+      this.options = options;
+      this.cols = typeof options.cols === "number" ? options.cols : 80;
+      this.rows = typeof options.rows === "number" ? options.rows : 24;
+      xtermMocks.terminalInstances.push(this);
+    }
+
+    loadAddon(addon: { activate?: (terminal: MockTerminal) => void }) {
+      addon.activate?.(this);
+    }
+
+    open(element: HTMLElement) {
+      this.openedElement = element;
+      element.dataset.mockXtermOpen = "true";
+    }
+
+    onData(handler: (data: string) => void) {
+      this.dataHandlers.push(handler);
+      return {
+        dispose: () => {
+          const index = this.dataHandlers.indexOf(handler);
+          if (index >= 0) this.dataHandlers.splice(index, 1);
+        },
+      };
+    }
+
+    emitData(data: string) {
+      for (const handler of this.dataHandlers) handler(data);
+    }
+
+    write(data: string) {
+      this.writes.push(data);
+      if (!this.openedElement) return;
+      const chunk = document.createElement("span");
+      // Keep test DOM readable without reimplementing xterm's ANSI parser.
+      chunk.textContent = data.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "");
+      this.openedElement.appendChild(chunk);
+    }
+
+    resize(cols: number, rows: number) {
+      this.cols = cols;
+      this.rows = rows;
+    }
+
+    focus() {
+      this.focused = true;
+      this.openedElement?.focus();
+    }
+
+    reset() {
+      this.writes = [];
+      if (this.openedElement) this.openedElement.textContent = "";
+    }
+
+    clear() {
+      if (this.openedElement) this.openedElement.textContent = "";
+    }
+
+    dispose() {
+      this.disposed = true;
+    }
+  }
+
+  class MockFitAddon {
+    fitCalls = 0;
+    terminal: MockTerminal | null = null;
+
+    constructor() {
+      xtermMocks.fitAddonInstances.push(this);
+    }
+
+    activate(terminal: MockTerminal) {
+      this.terminal = terminal;
+    }
+
+    fit() {
+      this.fitCalls += 1;
+      this.terminal?.resize(120, 32);
+    }
+  }
+
+  return {
+    MockTerminal,
+    MockFitAddon,
+    terminalInstances: [] as MockTerminal[],
+    fitAddonInstances: [] as MockFitAddon[],
+    reset() {
+      this.terminalInstances.length = 0;
+      this.fitAddonInstances.length = 0;
+    },
+  };
+});
+
+vi.mock("@xterm/xterm", () => ({
+  Terminal: xtermMocks.MockTerminal,
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: xtermMocks.MockFitAddon,
+}));
+
+vi.mock("@xterm/xterm/css/xterm.css", () => ({}));
+
 const mockEnvironmentsApi = vi.hoisted(() => ({
   list: vi.fn(),
   capabilities: vi.fn(),
@@ -246,6 +360,7 @@ describe("CompanyEnvironments — test provider button", () => {
     probeResolvers = new Map();
     originalWebSocket = globalThis.WebSocket;
     FakeWebSocket.instances = [];
+    xtermMocks.reset();
     globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
     mockInstanceSettingsApi.get.mockResolvedValue({ defaultEnvironmentId: null });
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableEnvironments: true });
@@ -670,27 +785,30 @@ describe("CompanyEnvironments — test provider button", () => {
     expect(FakeWebSocket.instances[0].url).toContain(
       "/api/environment-custom-image-setup-sessions/session-1/terminal/ws?terminalSessionId=terminal-session-1",
     );
-    expect(FakeWebSocket.instances[0].url).toContain("cols=100");
-    expect(FakeWebSocket.instances[0].url).toContain("rows=28");
+    expect(FakeWebSocket.instances[0].url).toContain("cols=120");
+    expect(FakeWebSocket.instances[0].url).toContain("rows=32");
+    expect(xtermMocks.terminalInstances[0].options.cursorBlink).toBe(true);
 
     await act(async () => {
       FakeWebSocket.instances[0].open();
       FakeWebSocket.instances[0].emitMessage(JSON.stringify({ type: "ready" }));
       FakeWebSocket.instances[0].emitMessage(JSON.stringify({ type: "output", data: "\u001b[?2004hsetup shell\r\n$ " }));
     });
-    const terminal = getOpenDialog()?.querySelector<HTMLTextAreaElement>(
-      "[data-testid='custom-image-terminal-input-session-1']",
+    const terminalScreen = getOpenDialog()?.querySelector<HTMLElement>(
+      "[data-testid='custom-image-terminal-screen-session-1']",
     );
     await waitForAssertion(() => {
-      expect(terminal?.value).toContain("setup shell");
-      expect(terminal?.value).not.toContain("[?2004h");
-      expect(document.activeElement).toBe(terminal);
+      expect(terminalScreen?.dataset.mockXtermOpen).toBe("true");
+      expect(xtermMocks.terminalInstances[0].writes.join("")).toContain("setup shell");
+      expect(xtermMocks.terminalInstances[0].focused).toBe(true);
+      expect(document.activeElement).toBe(terminalScreen);
       expect(getOpenDialog()?.textContent).toContain(command);
     });
+    expect(FakeWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "resize", cols: 120, rows: 32 }));
 
     await act(async () => {
-      terminal?.dispatchEvent(new KeyboardEvent("keydown", { key: "l", bubbles: true }));
-      terminal?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      xtermMocks.terminalInstances[0].emitData("l");
+      xtermMocks.terminalInstances[0].emitData("\r");
     });
 
     expect(FakeWebSocket.instances[0].sent).toContain(JSON.stringify({ type: "input", data: "l" }));
