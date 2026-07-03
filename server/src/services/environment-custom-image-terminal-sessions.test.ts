@@ -138,10 +138,37 @@ describe("EnvironmentCustomImageTerminalSessionStore", () => {
       id: minted.session.id,
       token: "wrong-token",
     }, new Date("2026-06-25T20:01:59.000Z"))).toBeNull();
+    expect(store.getById(minted.session.id, new Date("2026-06-25T20:05:00.000Z"))?.id)
+      .toBe(minted.session.id);
+    expect(store.cleanupExpired(new Date("2026-06-25T20:05:00.000Z"))).toBe(0);
     expect(store.get({
       id: minted.session.id,
       token: minted.token,
     }, new Date("2026-06-25T20:05:00.000Z"))).toBeNull();
+  });
+
+  it("retains post-connection session records until setup-session expiry", () => {
+    const store = new EnvironmentCustomImageTerminalSessionStore();
+    const now = new Date("2026-06-25T20:00:00.000Z");
+    const minted = store.create({
+      setupSessionId: "session-1",
+      companyId: "company-1",
+      environmentId: "env-1",
+      provider: "daytona",
+      ssh: { username: "ssh-token-secret", host: "203.0.113.10", port: 2222 },
+      setupExpiresAt: new Date("2026-06-25T20:30:00.000Z"),
+      connectionExpiresAt: new Date("2026-06-25T20:01:00.000Z"),
+      now,
+    });
+
+    expect(store.getById(minted.session.id, new Date("2026-06-25T20:05:00.000Z"))?.id)
+      .toBe(minted.session.id);
+    expect(store.cleanupExpired(new Date("2026-06-25T20:05:00.000Z"))).toBe(0);
+    expect(store.getById(minted.session.id, new Date("2026-06-25T20:05:00.000Z"))?.id)
+      .toBe(minted.session.id);
+
+    expect(store.cleanupExpired(new Date("2026-06-25T20:30:00.000Z"))).toBe(1);
+    expect(store.getById(minted.session.id, new Date("2026-06-25T20:30:00.000Z"))).toBeNull();
   });
 
   it("deletes all tokens for a setup session", () => {

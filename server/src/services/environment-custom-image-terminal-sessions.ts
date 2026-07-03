@@ -240,7 +240,7 @@ export class EnvironmentCustomImageTerminalSessionStore {
     if (!id) return null;
     const stored = this.sessionsById.get(id) ?? null;
     if (!stored) return null;
-    if (stored.session.connectExpiresAt.getTime() <= now.getTime()) {
+    if (stored.session.sessionExpiresAt.getTime() <= now.getTime()) {
       this.sessionsById.delete(id);
       return null;
     }
@@ -266,7 +266,7 @@ export class EnvironmentCustomImageTerminalSessionStore {
   cleanupExpired(now = new Date()): number {
     let removed = 0;
     for (const [id, stored] of this.sessionsById) {
-      if (stored.session.connectExpiresAt.getTime() <= now.getTime()) {
+      if (stored.session.sessionExpiresAt.getTime() <= now.getTime()) {
         this.sessionsById.delete(id);
         removed += 1;
       }
