@@ -814,6 +814,7 @@ export function environmentRoutes(
     const probe = await probeEnvironment(db, environment, {
       companyId: companyIdForSecrets,
       pluginWorkerManager: options.pluginWorkerManager,
+      applyCustomImageTemplate: environment.driver === "sandbox",
     });
     await logInstanceEnvironmentActivity({
       actor,

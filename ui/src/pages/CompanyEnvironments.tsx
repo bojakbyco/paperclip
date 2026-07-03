@@ -674,12 +674,10 @@ function sessionStatusCopy(status: EnvironmentCustomImageSetupSession["status"])
 }
 
 function EnvironmentImageTemplatePanel({
-  companyId,
   environment,
   providerCapability,
   providerDisplayName,
 }: {
-  companyId: string;
   environment: Environment;
   providerCapability: EnvironmentProviderCapability | null | undefined;
   providerDisplayName: string;
@@ -687,11 +685,11 @@ function EnvironmentImageTemplatePanel({
   const { pushToast } = useToast();
   const queryClient = useQueryClient();
   const state = capabilityState(providerCapability);
-  const overviewKey = queryKeys.environments.customImageTemplate(companyId, environment.id);
+  const overviewKey = queryKeys.environments.customImageTemplate(environment.id);
 
   const overviewQuery = useQuery({
     queryKey: overviewKey,
-    queryFn: () => environmentsApi.customImageTemplate(environment.id, companyId),
+    queryFn: () => environmentsApi.customImageTemplate(environment.id),
     enabled: state.kind === "supported",
     retry: false,
   });
@@ -719,7 +717,7 @@ function EnvironmentImageTemplatePanel({
 
   const startSetupMutation = useMutation({
     mutationFn: (input: { templateId?: string | null } = {}) =>
-      environmentsApi.startCustomImageSetupSession(environment.id, companyId, {
+      environmentsApi.startCustomImageSetupSession(environment.id, {
         templateId: input.templateId ?? null,
       }),
     onSuccess: (result) => {
@@ -796,7 +794,7 @@ function EnvironmentImageTemplatePanel({
   });
 
   const rollbackTemplateMutation = useMutation({
-    mutationFn: () => environmentsApi.rollbackCustomImageTemplate(environment.id, companyId),
+    mutationFn: () => environmentsApi.rollbackCustomImageTemplate(environment.id),
     onSuccess: (result) => {
       queryClient.setQueryData(overviewKey, (current: typeof overviewQuery.data) => ({
         activeTemplate: result.activeTemplate,
@@ -820,7 +818,7 @@ function EnvironmentImageTemplatePanel({
   });
 
   const disableTemplateMutation = useMutation({
-    mutationFn: () => environmentsApi.disableCustomImageTemplate(environment.id, companyId),
+    mutationFn: () => environmentsApi.disableCustomImageTemplate(environment.id),
     onSuccess: (template) => {
       queryClient.setQueryData(overviewKey, (current: typeof overviewQuery.data) => ({
         activeTemplate: null,
@@ -1687,7 +1685,6 @@ export function CompanyEnvironments() {
                     running machine as a reusable image for future runs.
                   </div>
                   <EnvironmentImageTemplatePanel
-                    companyId={selectedCompanyId}
                     environment={editingEnvironment}
                     providerCapability={editingSandboxCapability}
                     providerDisplayName={editingSandboxDisplayName}

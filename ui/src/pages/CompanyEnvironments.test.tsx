@@ -275,7 +275,6 @@ function getOpenDialog(): HTMLElement | null {
 function createSession(overrides: Record<string, unknown> = {}) {
   return {
     id: "session-1",
-    companyId: "company-1",
     environmentId: "env-1",
     templateId: null,
     promotedTemplateId: null,
@@ -306,7 +305,6 @@ function createSession(overrides: Record<string, unknown> = {}) {
 function createTemplate(overrides: Record<string, unknown> = {}) {
   return {
     id: "template-1",
-    companyId: "company-1",
     environmentId: "env-1",
     provider: "daytona",
     templateKind: "snapshot",
@@ -653,7 +651,7 @@ describe("CompanyEnvironments — test provider button", () => {
     await waitForAssertion(() => {
       expect(getOpenDialog()?.textContent).toContain("Configure image");
     });
-    expect(mockEnvironmentsApi.customImageTemplate).toHaveBeenCalledExactlyOnceWith("env-1", "company-1");
+    expect(mockEnvironmentsApi.customImageTemplate).toHaveBeenCalledExactlyOnceWith("env-1");
     await act(async () => click(findButton(document.body, "Cancel")));
     await waitForAssertion(() => expect(getOpenDialog()).toBeNull());
 
@@ -1011,7 +1009,6 @@ describe("CompanyEnvironments — test provider button", () => {
 
     expect(mockEnvironmentsApi.startCustomImageSetupSession).toHaveBeenCalledWith(
       "env-1",
-      "company-1",
       { templateId: "template-active" },
     );
     await waitForAssertion(() => {
