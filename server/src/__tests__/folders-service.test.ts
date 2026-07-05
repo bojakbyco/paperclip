@@ -49,13 +49,14 @@ describeEmbeddedPostgres("folder service", () => {
     return companyId;
   }
 
-  async function seedRoutine(companyId: string, title: string, folderId?: string | null) {
+  async function seedRoutine(companyId: string, title: string, folderId?: string | null, status = "active") {
     const [routine] = await db
       .insert(routines)
       .values({
         companyId,
         title,
         folderId: folderId ?? null,
+        status,
         responsibleUserId: "responsible-user",
       })
       .returning();
@@ -106,6 +107,24 @@ describeEmbeddedPostgres("folder service", () => {
     expect(listed.folders).toEqual([
       expect.objectContaining({ id: cleanup.id, name: "Ops", itemCount: 0 }),
       expect.objectContaining({ id: reporting.id, name: "Reporting", itemCount: 1 }),
+    ]);
+  });
+
+  it("excludes archived routines from folder counts", async () => {
+    const companyId = await seedCompany();
+    const svc = folderService(db);
+
+    const reporting = await svc.create(companyId, { kind: "routine", name: "Reporting" });
+    await seedRoutine(companyId, "Active filed", reporting.id);
+    await seedRoutine(companyId, "Archived filed", reporting.id, "archived");
+    await seedRoutine(companyId, "Active unfiled");
+    await seedRoutine(companyId, "Archived unfiled", null, "archived");
+
+    const listed = await svc.list(companyId, "routine");
+    expect(listed.allCount).toBe(2);
+    expect(listed.unfiledCount).toBe(1);
+    expect(listed.folders).toEqual([
+      expect.objectContaining({ id: reporting.id, itemCount: 1 }),
     ]);
   });
 

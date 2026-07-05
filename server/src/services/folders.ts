@@ -1,4 +1,4 @@
-import { and, asc, eq, max, sql } from "drizzle-orm";
+import { and, asc, eq, max, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { companySkills, folders, routines } from "@paperclipai/db";
 import type {
@@ -67,7 +67,7 @@ export function folderService(db: Db) {
         count: sql<number>`count(*)::int`,
       })
       .from(routines)
-      .where(eq(routines.companyId, companyId))
+      .where(and(eq(routines.companyId, companyId), ne(routines.status, "archived")))
       .groupBy(routines.folderId);
   }
 
