@@ -4,12 +4,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
   companies,
+  companySkills,
   createDb,
   documents,
+  folders,
   issueComments,
   issueDocuments,
   issues,
   projects,
+  routines,
 } from "@paperclipai/db";
 import { companySearchQuerySchema, COMPANY_SEARCH_MAX_QUERY_LENGTH } from "@paperclipai/shared";
 import {
@@ -72,6 +75,9 @@ describeEmbeddedPostgres("companySearchService", () => {
     await db.delete(documents);
     await db.delete(issueComments);
     await db.delete(issues);
+    await db.delete(routines);
+    await db.delete(companySkills);
+    await db.delete(folders);
     await db.delete(projects);
     await db.delete(agents);
     await db.delete(companies);
@@ -129,6 +135,48 @@ describeEmbeddedPostgres("companySearchService", () => {
       companyId,
       name: values.name ?? "Search project",
       description: values.description ?? null,
+      ...values,
+    });
+    return id;
+  }
+
+  async function createFolder(companyId: string, values: Partial<typeof folders.$inferInsert> = {}) {
+    const id = values.id ?? randomUUID();
+    await db.insert(folders).values({
+      id,
+      companyId,
+      kind: values.kind ?? "routine",
+      name: values.name ?? "Reporting",
+      color: values.color ?? null,
+      position: values.position ?? 0,
+      ...values,
+    });
+    return id;
+  }
+
+  async function createRoutine(companyId: string, values: Partial<typeof routines.$inferInsert> = {}) {
+    const id = values.id ?? randomUUID();
+    await db.insert(routines).values({
+      id,
+      companyId,
+      title: values.title ?? "Standup digest",
+      description: values.description ?? null,
+      status: values.status ?? "active",
+      ...values,
+    });
+    return id;
+  }
+
+  async function createCompanySkill(companyId: string, values: Partial<typeof companySkills.$inferInsert> = {}) {
+    const id = values.id ?? randomUUID();
+    await db.insert(companySkills).values({
+      id,
+      companyId,
+      key: values.key ?? `paperclip/${id}`,
+      slug: values.slug ?? `skill-${id.slice(0, 8)}`,
+      name: values.name ?? "Research Skill",
+      description: values.description ?? null,
+      markdown: values.markdown ?? "# Research Skill",
       ...values,
     });
     return id;
@@ -238,7 +286,7 @@ describeEmbeddedPostgres("companySearchService", () => {
       }),
     });
     expect(result.results[0]?.snippet).toMatch(/comet tail/i);
-    expect(result.countsByType).toEqual({ issue: 0, artifact: 1, agent: 0, project: 0 });
+    expect(result.countsByType).toEqual({ issue: 0, artifact: 1, agent: 0, project: 0, routine: 0, skill: 0 });
   });
 
   it("does not pass high-offset search fetch windows through to artifact query validation", async () => {
@@ -440,8 +488,54 @@ describeEmbeddedPostgres("companySearchService", () => {
     const result = await svc.search(companyId, companySearchQuerySchema.parse({ q: "needle", limit: "2", offset: "2" }));
 
     expect(result.results.map((row) => row.id)).toEqual([agentIds[2], projectIds[0]]);
-    expect(result.countsByType).toEqual({ issue: 0, artifact: 0, agent: 3, project: 3 });
+    expect(result.countsByType).toEqual({ issue: 0, artifact: 0, agent: 3, project: 3, routine: 0, skill: 0 });
     expect(result.hasMore).toBe(true);
+  });
+
+  it("searches routines and skills by folder and returns folder paths", async () => {
+    const companyId = await createCompany();
+    const otherCompanyId = await createCompany("Other Co");
+    const routineFolderId = await createFolder(companyId, { kind: "routine", name: "Reporting" });
+    const skillFolderId = await createFolder(companyId, { kind: "skill", name: "Research" });
+    const routineId = await createRoutine(companyId, {
+      title: "Daily standup digest",
+      description: "Summarizes team activity.",
+      folderId: routineFolderId,
+    });
+    const skillId = await createCompanySkill(companyId, {
+      key: "paperclip/deep-research",
+      slug: "deep-research",
+      name: "Deep Research",
+      description: "Collects evidence for planning.",
+      folderId: skillFolderId,
+    });
+    await createFolder(otherCompanyId, { kind: "routine", name: "Reporting" });
+    await createRoutine(otherCompanyId, {
+      title: "Other company reporting routine",
+    });
+
+    const byName = await svc.search(companyId, companySearchQuerySchema.parse({ q: "standup" }));
+    const routineByName = byName.results.find((item) => item.id === routineId);
+    expect(routineByName).toMatchObject({
+      type: "routine",
+      href: expect.stringContaining(`/routines/${routineId}`),
+      sourceLabel: "Folder: Reporting",
+      routine: expect.objectContaining({
+        folder: expect.objectContaining({ path: "Reporting" }),
+      }),
+    });
+
+    const byFolder = await svc.search(companyId, companySearchQuerySchema.parse({ q: "Research", scope: "skills" }));
+    expect(byFolder.results.map((item) => item.id)).toContain(skillId);
+    expect(byFolder.results.find((item) => item.id === skillId)).toMatchObject({
+      type: "skill",
+      href: expect.stringContaining("/skills/deep-research"),
+      sourceLabel: "Folder: Research",
+      skill: expect.objectContaining({
+        folder: expect.objectContaining({ path: "Research" }),
+      }),
+    });
+    expect(byFolder.countsByType).toMatchObject({ routine: 0, skill: 1 });
   });
 
   it("escapes underscore and backslash characters in issue phrase and token patterns", async () => {

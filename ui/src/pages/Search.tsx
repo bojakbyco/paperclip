@@ -38,11 +38,13 @@ const SCOPE_LABELS: Record<CompanySearchScope, string> = {
   artifacts: "Artifacts",
   agents: "Agents",
   projects: "Projects",
+  routines: "Routines",
+  skills: "Skills",
 };
 
-type SubGroupKey = "issues" | "comments" | "documents" | "artifacts" | "agents" | "projects";
+type SubGroupKey = "issues" | "comments" | "documents" | "artifacts" | "agents" | "projects" | "routines" | "skills";
 
-const SUBGROUP_ORDER: SubGroupKey[] = ["issues", "comments", "documents", "artifacts", "agents", "projects"];
+const SUBGROUP_ORDER: SubGroupKey[] = ["issues", "comments", "documents", "artifacts", "agents", "projects", "routines", "skills"];
 
 const SUBGROUP_LABELS: Record<SubGroupKey, string> = {
   issues: "Tasks",
@@ -51,12 +53,16 @@ const SUBGROUP_LABELS: Record<SubGroupKey, string> = {
   artifacts: "Artifacts",
   agents: "Agents",
   projects: "Projects",
+  routines: "Routines",
+  skills: "Skills",
 };
 
 function classifyResult(result: CompanySearchResult): SubGroupKey {
   if (result.type === "artifact") return "artifacts";
   if (result.type === "agent") return "agents";
   if (result.type === "project") return "projects";
+  if (result.type === "routine") return "routines";
+  if (result.type === "skill") return "skills";
   const matched = new Set(result.matchedFields);
   if (matched.has("title") || matched.has("identifier") || matched.has("description")) return "issues";
   if (matched.has("comment")) return "comments";
@@ -264,7 +270,7 @@ export function Search() {
     return () => window.removeEventListener("keydown", handler);
   }, [focusInput]);
 
-  const counts = data?.countsByType ?? { issue: 0, artifact: 0, agent: 0, project: 0 };
+  const counts = data?.countsByType ?? { issue: 0, artifact: 0, agent: 0, project: 0, routine: 0, skill: 0 };
   const totalResults = data?.results.length ?? 0;
 
   const tabItems = useMemo<PageTabItem[]>(() => {
@@ -279,11 +285,20 @@ export function Search() {
     const issuesTotal = counts.issue ?? 0;
     return COMPANY_SEARCH_SCOPES.map((value) => {
       let count: number | null = null;
-      if (value === "all") count = (counts.issue ?? 0) + (counts.artifact ?? 0) + (counts.agent ?? 0) + (counts.project ?? 0);
+      if (value === "all") {
+        count = (counts.issue ?? 0)
+          + (counts.artifact ?? 0)
+          + (counts.agent ?? 0)
+          + (counts.project ?? 0)
+          + (counts.routine ?? 0)
+          + (counts.skill ?? 0);
+      }
       else if (value === "issues") count = issuesTotal;
       else if (value === "artifacts") count = counts.artifact ?? 0;
       else if (value === "agents") count = counts.agent ?? 0;
       else if (value === "projects") count = counts.project ?? 0;
+      else if (value === "routines") count = counts.routine ?? 0;
+      else if (value === "skills") count = counts.skill ?? 0;
       return {
         value,
         label: (
@@ -346,7 +361,7 @@ export function Search() {
                 }
               }
             }}
-            placeholder="Search tasks, comments, documents, artifacts, agents, projects…"
+            placeholder="Search tasks, comments, documents, artifacts, agents, projects, routines, skills…"
             aria-label="Search query"
             className="h-10 pl-9 pr-20 text-sm"
           />
@@ -456,7 +471,7 @@ function SearchTabContent({
         <div>
           <h2 className="text-lg font-semibold">Type to search company memory.</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Tasks, comments, plan documents, artifacts, agents, projects — same surface, ranked by relevance.
+            Tasks, comments, plan documents, artifacts, agents, projects, routines, and skills — same surface, ranked by relevance.
           </p>
         </div>
         {recentSearches.length > 0 ? (

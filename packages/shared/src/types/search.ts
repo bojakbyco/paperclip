@@ -1,9 +1,19 @@
 import type { IssuePriority, IssueStatus } from "../constants.js";
 
-export const COMPANY_SEARCH_SCOPES = ["all", "issues", "comments", "documents", "artifacts", "agents", "projects"] as const;
+export const COMPANY_SEARCH_SCOPES = [
+  "all",
+  "issues",
+  "comments",
+  "documents",
+  "artifacts",
+  "agents",
+  "projects",
+  "routines",
+  "skills",
+] as const;
 export type CompanySearchScope = (typeof COMPANY_SEARCH_SCOPES)[number];
 
-export type CompanySearchResultType = "issue" | "artifact" | "agent" | "project";
+export type CompanySearchResultType = "issue" | "artifact" | "agent" | "project" | "routine" | "skill";
 
 export interface CompanySearchHighlight {
   start: number;
@@ -41,6 +51,29 @@ export interface CompanySearchArtifactSummary {
   updatedAt: string;
 }
 
+export interface CompanySearchFolderSummary {
+  id: string;
+  name: string;
+  path: string;
+}
+
+export interface CompanySearchRoutineSummary {
+  id: string;
+  title: string;
+  status: string;
+  folder: CompanySearchFolderSummary | null;
+  updatedAt: string;
+}
+
+export interface CompanySearchSkillSummary {
+  id: string;
+  key: string;
+  slug: string;
+  name: string;
+  folder: CompanySearchFolderSummary | null;
+  updatedAt: string;
+}
+
 export interface CompanySearchResult {
   id: string;
   type: CompanySearchResultType;
@@ -53,6 +86,8 @@ export interface CompanySearchResult {
   snippets: CompanySearchSnippet[];
   issue?: CompanySearchIssueSummary;
   artifact?: CompanySearchArtifactSummary;
+  routine?: CompanySearchRoutineSummary;
+  skill?: CompanySearchSkillSummary;
   updatedAt: string | null;
   previewImageUrl: string | null;
 }

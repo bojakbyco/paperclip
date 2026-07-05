@@ -1,5 +1,5 @@
 import { memo, type ComponentType, type SVGProps } from "react";
-import { Bot, FileText, Hexagon, MessageSquare, Paperclip, Quote } from "lucide-react";
+import { Bot, FileText, Folder, Hexagon, MessageSquare, Paperclip, Quote, Repeat, Wrench } from "lucide-react";
 import type { Agent, CompanySearchResult } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,7 @@ const SNIPPET_STYLES: Record<string, SnippetStyle> = {
   document: { Icon: FileText, label: "Doc" },
   artifact: { Icon: Paperclip, label: "Artifact" },
   description: { Icon: Quote, label: "Description" },
+  folder: { Icon: Folder, label: "Folder" },
 };
 
 function snippetStyle(field: string, fallbackLabel: string): SnippetStyle {
@@ -105,6 +106,78 @@ function SearchResultRowImpl({
               fallbackLabel={result.sourceLabel ?? "Project"}
             />
           ) : null}
+        </div>
+      </Link>
+    );
+  }
+
+  if (result.type === "routine") {
+    const routine = result.routine;
+    if (!routine) return null;
+    return (
+      <Link
+        to={result.href}
+        className={cn(ROW_BASE, "py-3", isActive && "bg-muted/40", className)}
+        data-result-type="routine"
+      >
+        <Repeat className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
+            <span className="truncate text-sm font-medium">{routine.title}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {routine.folder?.path ?? "Unfiled"}
+            </span>
+          </div>
+          {(result.snippets.length > 0 ? result.snippets : result.sourceLabel ? [{
+            field: "folder",
+            label: "Folder",
+            text: result.sourceLabel,
+            highlights: [],
+          }] : []).slice(0, 2).map((snippet, index) => (
+            <SnippetLine
+              key={`${snippet.field}-${index}`}
+              text={snippet.text}
+              highlights={snippet.highlights}
+              field={snippet.field}
+              fallbackLabel={snippet.label}
+            />
+          ))}
+        </div>
+      </Link>
+    );
+  }
+
+  if (result.type === "skill") {
+    const skill = result.skill;
+    if (!skill) return null;
+    return (
+      <Link
+        to={result.href}
+        className={cn(ROW_BASE, "py-3", isActive && "bg-muted/40", className)}
+        data-result-type="skill"
+      >
+        <Wrench className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-baseline gap-x-2.5 gap-y-1">
+            <span className="truncate text-sm font-medium">{skill.name}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {skill.folder?.path ?? "Unfiled"}
+            </span>
+          </div>
+          {(result.snippets.length > 0 ? result.snippets : result.sourceLabel ? [{
+            field: "folder",
+            label: "Folder",
+            text: result.sourceLabel,
+            highlights: [],
+          }] : []).slice(0, 2).map((snippet, index) => (
+            <SnippetLine
+              key={`${snippet.field}-${index}`}
+              text={snippet.text}
+              highlights={snippet.highlights}
+              field={snippet.field}
+              fallbackLabel={snippet.label}
+            />
+          ))}
         </div>
       </Link>
     );

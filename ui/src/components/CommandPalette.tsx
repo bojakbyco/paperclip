@@ -7,6 +7,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
+import { searchApi } from "../api/search";
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
 import {
@@ -31,6 +32,8 @@ import {
   FileCode2,
   Plus,
   Search,
+  Repeat,
+  Wrench,
 } from "lucide-react";
 import { Identity } from "./Identity";
 import { agentUrl, projectUrl } from "../lib/utils";
@@ -126,6 +129,12 @@ export function CommandPalette() {
     enabled: !!selectedCompanyId && open && searchQuery.length > 0,
   });
 
+  const { data: quickSearch } = useQuery({
+    queryKey: queryKeys.companySearch.search(selectedCompanyId!, searchQuery, "all", 12, 0),
+    queryFn: () => searchApi.search(selectedCompanyId!, { q: searchQuery, scope: "all", limit: 12 }),
+    enabled: !!selectedCompanyId && open && searchQuery.length > 0,
+  });
+
   const { data: agents = [] } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
     queryFn: () => agentsApi.list(selectedCompanyId!),
@@ -160,6 +169,14 @@ export function CommandPalette() {
     () => (searchQuery.length > 0 ? searchedIssues : issues),
     [issues, searchedIssues, searchQuery],
   );
+  const quickRoutines = useMemo(
+    () => (quickSearch?.results ?? []).filter((result) => result.type === "routine" && result.routine).slice(0, 5),
+    [quickSearch?.results],
+  );
+  const quickSkills = useMemo(
+    () => (quickSearch?.results ?? []).filter((result) => result.type === "skill" && result.skill).slice(0, 5),
+    [quickSearch?.results],
+  );
 
   // Client-side typeahead ranking over the already-loaded projects. cmdk ranks
   // items by their `value` (which defaults to the rendered name) and would bury
@@ -184,9 +201,15 @@ export function CommandPalette() {
 
   const showSearchAll = searchQuery.length > 0;
   const showPromotedProjects = showSearchAll && matchedProjects.length > 0;
+  const showRoutines = showSearchAll && quickRoutines.length > 0;
+  const showSkills = showSearchAll && quickSkills.length > 0;
   const taskLimit = showPromotedProjects ? TASK_LIMIT_WITH_PROJECTS : TASK_LIMIT;
   const showEmptyHint =
-    showSearchAll && visibleIssues.length === 0 && matchedProjects.length === 0;
+    showSearchAll
+    && visibleIssues.length === 0
+    && matchedProjects.length === 0
+    && quickRoutines.length === 0
+    && quickSkills.length === 0;
 
   return (
     <CommandDialog open={open} onOpenChange={(v) => {
@@ -256,6 +279,50 @@ export function CommandPalette() {
                       {project.description}
                     </span>
                   ) : null}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        )}
+
+        {showRoutines && (
+          <>
+            <CommandGroup heading="Routines">
+              {quickRoutines.map((result) => (
+                <CommandItem
+                  key={result.id}
+                  value={`${searchQuery} ${result.routine!.title} ${result.routine!.folder?.path ?? ""}`}
+                  onSelect={() => go(result.href)}
+                  data-testid="command-routine-match"
+                >
+                  <Repeat className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="min-w-0 truncate">{result.routine!.title}</span>
+                  <span className="ml-2 hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:inline">
+                    {result.routine!.folder?.path ?? "Unfiled"}
+                  </span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            <CommandSeparator />
+          </>
+        )}
+
+        {showSkills && (
+          <>
+            <CommandGroup heading="Skills">
+              {quickSkills.map((result) => (
+                <CommandItem
+                  key={result.id}
+                  value={`${searchQuery} ${result.skill!.name} ${result.skill!.folder?.path ?? ""}`}
+                  onSelect={() => go(result.href)}
+                  data-testid="command-skill-match"
+                >
+                  <Wrench className="mr-2 h-4 w-4 shrink-0" />
+                  <span className="min-w-0 truncate">{result.skill!.name}</span>
+                  <span className="ml-2 hidden min-w-0 flex-1 truncate text-xs text-muted-foreground sm:inline">
+                    {result.skill!.folder?.path ?? "Unfiled"}
+                  </span>
                 </CommandItem>
               ))}
             </CommandGroup>

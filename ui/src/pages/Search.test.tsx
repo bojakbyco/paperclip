@@ -169,7 +169,7 @@ describe("Search page", () => {
       scope: "all",
       limit: 20,
       offset: 0,
-      countsByType: { issue: 1, artifact: 0, agent: 0, project: 0 },
+      countsByType: { issue: 1, artifact: 0, agent: 0, project: 0, routine: 0, skill: 0 },
       hasMore: false,
       results: [
         {
@@ -239,7 +239,7 @@ describe("Search page", () => {
       scope: "artifacts",
       limit: 20,
       offset: 0,
-      countsByType: { issue: 0, artifact: 1, agent: 0, project: 0 },
+      countsByType: { issue: 0, artifact: 1, agent: 0, project: 0, routine: 0, skill: 0 },
       hasMore: false,
       results: [
         {
@@ -297,6 +297,88 @@ describe("Search page", () => {
     });
   });
 
+  it("renders routine and skill search results with folder paths", async () => {
+    searchApiMock.search.mockResolvedValueOnce({
+      query: "research",
+      normalizedQuery: "research",
+      scope: "all",
+      limit: 20,
+      offset: 0,
+      countsByType: { issue: 0, artifact: 0, agent: 0, project: 0, routine: 1, skill: 1 },
+      hasMore: false,
+      results: [
+        {
+          id: "routine-1",
+          type: "routine",
+          score: 120,
+          title: "Research digest",
+          href: "/PAP/routines/routine-1",
+          matchedFields: ["title", "folder"],
+          sourceLabel: "Folder: Reporting",
+          snippet: "Reporting",
+          snippets: [
+            {
+              field: "folder",
+              label: "Folder",
+              text: "Reporting",
+              highlights: [],
+            },
+          ],
+          routine: {
+            id: "routine-1",
+            title: "Research digest",
+            status: "active",
+            folder: { id: "folder-1", name: "Reporting", path: "Reporting" },
+            updatedAt: new Date().toISOString(),
+          },
+          updatedAt: new Date().toISOString(),
+          previewImageUrl: null,
+        },
+        {
+          id: "skill-1",
+          type: "skill",
+          score: 110,
+          title: "Deep Research",
+          href: "/PAP/skills/deep-research",
+          matchedFields: ["title", "folder"],
+          sourceLabel: "Folder: Research",
+          snippet: "Research",
+          snippets: [
+            {
+              field: "folder",
+              label: "Folder",
+              text: "Research",
+              highlights: [],
+            },
+          ],
+          skill: {
+            id: "skill-1",
+            key: "paperclip/deep-research",
+            slug: "deep-research",
+            name: "Deep Research",
+            folder: { id: "folder-2", name: "Research", path: "Research" },
+            updatedAt: new Date().toISOString(),
+          },
+          updatedAt: new Date().toISOString(),
+          previewImageUrl: null,
+        },
+      ],
+    });
+
+    const { root } = renderSearch("/search?q=research", container);
+
+    await waitForAssertion(() => {
+      expect(container.textContent).toContain("Research digest");
+      expect(container.textContent).toContain("Deep Research");
+      expect(container.textContent).toContain("Reporting");
+      expect(container.textContent).toContain("Research");
+    });
+
+    flushSync(() => {
+      root.unmount();
+    });
+  });
+
   it("debounces typing into the input and dispatches a search after the debounce window", async () => {
     searchApiMock.search.mockResolvedValue({
       query: "deflake",
@@ -304,7 +386,7 @@ describe("Search page", () => {
       scope: "all",
       limit: 20,
       offset: 0,
-      countsByType: { issue: 0, artifact: 0, agent: 0, project: 0 },
+      countsByType: { issue: 0, artifact: 0, agent: 0, project: 0, routine: 0, skill: 0 },
       hasMore: false,
       results: [],
     });
@@ -348,7 +430,7 @@ describe("Search page", () => {
       scope: "all",
       limit: 20,
       offset: 0,
-      countsByType: { issue: 1, artifact: 0, agent: 0, project: 0 },
+      countsByType: { issue: 1, artifact: 0, agent: 0, project: 0, routine: 0, skill: 0 },
       hasMore: false,
       results: [
         {
@@ -402,7 +484,7 @@ describe("Search page", () => {
       scope: "comments",
       limit: 20,
       offset: 0,
-      countsByType: { issue: 0, artifact: 0, agent: 0, project: 0 },
+      countsByType: { issue: 0, artifact: 0, agent: 0, project: 0, routine: 0, skill: 0 },
       hasMore: false,
       results: [],
     });

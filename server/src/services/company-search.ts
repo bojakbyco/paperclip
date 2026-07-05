@@ -1,7 +1,7 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, companies, issues, projects } from "@paperclipai/db";
+import { agents, companies, companySkills, folders, issues, projects, routines } from "@paperclipai/db";
 import {
   COMPANY_SEARCH_MAX_LIMIT,
   COMPANY_SEARCH_MAX_OFFSET,
@@ -10,12 +10,15 @@ import {
   COMPANY_ARTIFACTS_MAX_QUERY_LENGTH,
   type CompanyArtifact,
   type CompanySearchArtifactSummary,
+  type CompanySearchFolderSummary,
   type CompanySearchIssueSummary,
   type CompanySearchQuery,
   type CompanySearchResponse,
   type CompanySearchResult,
   type CompanySearchResultType,
+  type CompanySearchRoutineSummary,
   type CompanySearchScope,
+  type CompanySearchSkillSummary,
   type CompanySearchSnippet,
 } from "@paperclipai/shared";
 import { companyArtifactsService } from "./company-artifacts.js";
@@ -59,6 +62,11 @@ type SimpleSearchRow = {
   title: string;
   description: string | null;
   role?: string | null;
+  key?: string | null;
+  slug?: string | null;
+  status?: string | null;
+  folderId?: string | null;
+  folderName?: string | null;
   updatedAt: Date;
 };
 
@@ -193,7 +201,14 @@ function matchTerms(normalizedQuery: string, tokens: string[]) {
 }
 
 function makeCounts(results: CompanySearchResult[]) {
-  const counts: Record<CompanySearchResultType, number> = { issue: 0, artifact: 0, agent: 0, project: 0 };
+  const counts: Record<CompanySearchResultType, number> = {
+    issue: 0,
+    artifact: 0,
+    agent: 0,
+    project: 0,
+    routine: 0,
+    skill: 0,
+  };
   for (const result of results) counts[result.type] += 1;
   return counts;
 }
@@ -212,6 +227,14 @@ function scopeIncludesArtifacts(scope: CompanySearchScope) {
 
 function scopeIncludesProjects(scope: CompanySearchScope) {
   return scope === "all" || scope === "projects";
+}
+
+function scopeIncludesRoutines(scope: CompanySearchScope) {
+  return scope === "all" || scope === "routines";
+}
+
+function scopeIncludesSkills(scope: CompanySearchScope) {
+  return scope === "all" || scope === "skills";
 }
 
 function issueSearchCondition(scope: CompanySearchScope, input: {
@@ -286,13 +309,111 @@ function issueResult(row: IssueSearchRow, prefix: string, normalizedQuery: strin
 }
 
 function scoreSimpleRow(row: SimpleSearchRow, normalizedQuery: string, tokens: string[]) {
-  const haystack = [row.title, row.description, row.role].filter(Boolean).join(" ").toLowerCase();
+  const haystack = [row.title, row.description, row.role, row.key, row.slug, row.folderName]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
   let score = haystack.includes(normalizedQuery) ? 90 : 0;
   for (const token of tokens) {
     if (haystack.includes(token)) score += 20;
   }
   if (row.title.toLowerCase().startsWith(normalizedQuery)) score += 80;
+  if (row.folderName?.toLowerCase().includes(normalizedQuery)) score += 60;
   return score;
+}
+
+function simpleMatchedFields(row: SimpleSearchRow, normalizedQuery: string, tokens: string[]) {
+  const terms = matchTerms(normalizedQuery, tokens);
+  const fieldValues: Array<[string, string | null | undefined]> = [
+    ["title", row.title],
+    ["description", row.description],
+    ["role", row.role],
+    ["key", row.key],
+    ["slug", row.slug],
+    ["folder", row.folderName],
+  ];
+  return fieldValues
+    .filter(([, value]) => {
+      const lowered = (value ?? "").toLowerCase();
+      return lowered.length > 0 && terms.some((term) => lowered.includes(term.toLowerCase()));
+    })
+    .map(([field]) => field);
+}
+
+function folderSummary(row: Pick<SimpleSearchRow, "folderId" | "folderName">): CompanySearchFolderSummary | null {
+  if (!row.folderId || !row.folderName) return null;
+  return { id: row.folderId, name: row.folderName, path: row.folderName };
+}
+
+function entitySourceLabel(folder: CompanySearchFolderSummary | null) {
+  return folder ? `Folder: ${folder.path}` : "Unfiled";
+}
+
+function simpleEntitySnippets(row: SimpleSearchRow, normalizedQuery: string, tokens: string[], entityLabel: string) {
+  const terms = matchTerms(normalizedQuery, tokens);
+  const matched = new Set(simpleMatchedFields(row, normalizedQuery, tokens));
+  const candidates: Array<CompanySearchSnippet | null> = [];
+  if (matched.has("folder")) candidates.push(createSnippet("folder", "Folder", row.folderName, terms));
+  if (matched.has("description")) candidates.push(createSnippet("description", entityLabel, row.description, terms));
+  if (matched.has("key")) candidates.push(createSnippet("key", "Key", row.key, terms));
+  if (matched.has("slug")) candidates.push(createSnippet("slug", "Slug", row.slug, terms));
+  if (matched.has("role")) candidates.push(createSnippet("role", entityLabel, row.role, terms));
+  return candidates.filter((snippet): snippet is CompanySearchSnippet => Boolean(snippet)).slice(0, 2);
+}
+
+function routineResult(row: SimpleSearchRow, prefix: string, normalizedQuery: string, tokens: string[]): CompanySearchResult {
+  const folder = folderSummary(row);
+  const snippets = simpleEntitySnippets(row, normalizedQuery, tokens, "Routine");
+  const updatedAt = iso(row.updatedAt);
+  const routine: CompanySearchRoutineSummary = {
+    id: row.id,
+    title: row.title,
+    status: row.status ?? "active",
+    folder,
+    updatedAt: updatedAt!,
+  };
+  return {
+    id: row.id,
+    type: "routine",
+    score: scoreSimpleRow(row, normalizedQuery, tokens),
+    title: row.title,
+    href: `/${prefix}/routines/${encodeURIComponent(row.id)}`,
+    matchedFields: simpleMatchedFields(row, normalizedQuery, tokens),
+    sourceLabel: entitySourceLabel(folder),
+    snippet: snippets[0]?.text ?? null,
+    snippets,
+    routine,
+    updatedAt,
+    previewImageUrl: null,
+  };
+}
+
+function skillResult(row: SimpleSearchRow, prefix: string, normalizedQuery: string, tokens: string[]): CompanySearchResult {
+  const folder = folderSummary(row);
+  const snippets = simpleEntitySnippets(row, normalizedQuery, tokens, "Skill");
+  const updatedAt = iso(row.updatedAt);
+  const skill: CompanySearchSkillSummary = {
+    id: row.id,
+    key: row.key ?? row.id,
+    slug: row.slug ?? row.id,
+    name: row.title,
+    folder,
+    updatedAt: updatedAt!,
+  };
+  return {
+    id: row.id,
+    type: "skill",
+    score: scoreSimpleRow(row, normalizedQuery, tokens),
+    title: row.title,
+    href: `/${prefix}/skills/${encodeURIComponent(row.slug || row.key || row.id)}`,
+    matchedFields: simpleMatchedFields(row, normalizedQuery, tokens),
+    sourceLabel: entitySourceLabel(folder),
+    snippet: snippets[0]?.text ?? null,
+    snippets,
+    skill,
+    updatedAt,
+    previewImageUrl: null,
+  };
 }
 
 function artifactResult(artifact: CompanyArtifact, normalizedQuery: string, tokens: string[]): CompanySearchResult {
@@ -358,7 +479,14 @@ export function companySearchService(db: Db) {
       const scope = query.scope;
       const limit = query.limit;
       const offset = query.offset;
-      const emptyCounts: Record<CompanySearchResultType, number> = { issue: 0, artifact: 0, agent: 0, project: 0 };
+      const emptyCounts: Record<CompanySearchResultType, number> = {
+        issue: 0,
+        artifact: 0,
+        agent: 0,
+        project: 0,
+        routine: 0,
+        skill: 0,
+      };
       if (normalizedQuery.length === 0) {
         return {
           query: query.q,
@@ -695,6 +823,71 @@ export function companySearchService(db: Db) {
           .limit(fetchLimit)
         : [];
 
+      const routineCondition = simpleTextCondition([
+        sql`${routines.title}`,
+        sql`${routines.description}`,
+        sql`${folders.name}`,
+      ], containsPattern, tokenArray);
+      const routineRows = scopeIncludesRoutines(scope)
+        ? await db
+          .select({
+            id: routines.id,
+            title: routines.title,
+            description: routines.description,
+            status: routines.status,
+            folderId: routines.folderId,
+            folderName: folders.name,
+            updatedAt: routines.updatedAt,
+          })
+          .from(routines)
+          .leftJoin(
+            folders,
+            and(
+              eq(routines.folderId, folders.id),
+              eq(folders.companyId, companyId),
+              eq(folders.kind, "routine"),
+            ),
+          )
+          .where(and(eq(routines.companyId, companyId), routineCondition))
+          .orderBy(desc(routines.updatedAt), desc(routines.id))
+          .limit(fetchLimit)
+        : [];
+
+      const skillCondition = simpleTextCondition([
+        sql`${companySkills.name}`,
+        sql`${companySkills.description}`,
+        sql`${companySkills.key}`,
+        sql`${companySkills.slug}`,
+        sql`${companySkills.tagline}`,
+        sql`${companySkills.markdown}`,
+        sql`${folders.name}`,
+      ], containsPattern, tokenArray);
+      const skillRows = scopeIncludesSkills(scope)
+        ? await db
+          .select({
+            id: companySkills.id,
+            title: companySkills.name,
+            description: companySkills.description,
+            key: companySkills.key,
+            slug: companySkills.slug,
+            folderId: companySkills.folderId,
+            folderName: folders.name,
+            updatedAt: companySkills.updatedAt,
+          })
+          .from(companySkills)
+          .leftJoin(
+            folders,
+            and(
+              eq(companySkills.folderId, folders.id),
+              eq(folders.companyId, companyId),
+              eq(folders.kind, "skill"),
+            ),
+          )
+          .where(and(eq(companySkills.companyId, companyId), skillCondition))
+          .orderBy(desc(companySkills.updatedAt), desc(companySkills.id))
+          .limit(fetchLimit)
+        : [];
+
       const artifactRows = scopeIncludesArtifacts(scope)
         ? await companyArtifactsService(db).list(companyId, {
           q: normalizedQuery.slice(0, COMPANY_ARTIFACTS_MAX_QUERY_LENGTH),
@@ -739,6 +932,8 @@ export function companySearchService(db: Db) {
             previewImageUrl: null,
           };
         }),
+        ...(routineRows as SimpleSearchRow[]).map((row) => routineResult(row, prefix, normalizedQuery, tokens)),
+        ...(skillRows as SimpleSearchRow[]).map((row) => skillResult(row, prefix, normalizedQuery, tokens)),
       ].sort((left, right) => {
         if (right.score !== left.score) return right.score - left.score;
         return (right.updatedAt ?? "").localeCompare(left.updatedAt ?? "");

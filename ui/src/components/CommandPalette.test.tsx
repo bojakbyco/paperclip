@@ -42,6 +42,10 @@ const mockProjectsApi = vi.hoisted(() => ({
   list: vi.fn(),
 }));
 
+const mockSearchApi = vi.hoisted(() => ({
+  search: vi.fn(),
+}));
+
 const mockInstanceSettingsApi = vi.hoisted(() => ({
   getExperimental: vi.fn(),
 }));
@@ -81,6 +85,10 @@ vi.mock("../api/agents", () => ({
 
 vi.mock("../api/projects", () => ({
   projectsApi: mockProjectsApi,
+}));
+
+vi.mock("../api/search", () => ({
+  searchApi: mockSearchApi,
 }));
 
 vi.mock("../api/instanceSettings", () => ({
@@ -192,6 +200,7 @@ describe("CommandPalette", () => {
     mockIssuesApi.list.mockReset();
     mockAgentsApi.list.mockReset();
     mockProjectsApi.list.mockReset();
+    mockSearchApi.search.mockReset();
     mockInstanceSettingsApi.getExperimental.mockReset();
     navigateState.navigate.mockReset();
     locationState.location.pathname = "/";
@@ -200,6 +209,16 @@ describe("CommandPalette", () => {
     mockIssuesApi.list.mockResolvedValue([]);
     mockAgentsApi.list.mockResolvedValue([]);
     mockProjectsApi.list.mockResolvedValue([]);
+    mockSearchApi.search.mockResolvedValue({
+      query: "",
+      normalizedQuery: "",
+      scope: "all",
+      limit: 12,
+      offset: 0,
+      countsByType: { issue: 0, artifact: 0, agent: 0, project: 0, routine: 0, skill: 0 },
+      hasMore: false,
+      results: [],
+    });
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableExperimentalFileViewer: false,
     });
@@ -374,6 +393,107 @@ describe("CommandPalette", () => {
     });
     await waitForAssertion(() => {
       expect(navigateState.navigate).toHaveBeenCalledWith("/projects/mobile");
+    });
+
+    act(() => {
+      root.unmount();
+    });
+  });
+
+  it("shows routine and skill quick matches with folder paths while typing", async () => {
+    mockIssuesApi.list.mockResolvedValue([]);
+    const quickSearchResponse = {
+      query: "standup",
+      normalizedQuery: "standup",
+      scope: "all",
+      limit: 12,
+      offset: 0,
+      countsByType: { issue: 0, artifact: 0, agent: 0, project: 0, routine: 1, skill: 1 },
+      hasMore: false,
+      results: [
+        {
+          id: "routine-1",
+          type: "routine",
+          score: 100,
+          title: "Daily standup digest",
+          href: "/PAP/routines/routine-1",
+          matchedFields: ["title"],
+          sourceLabel: "Folder: Reporting",
+          snippet: null,
+          snippets: [],
+          routine: {
+            id: "routine-1",
+            title: "Daily standup digest",
+            status: "active",
+            folder: { id: "folder-1", name: "Reporting", path: "Reporting" },
+            updatedAt: new Date().toISOString(),
+          },
+          updatedAt: new Date().toISOString(),
+          previewImageUrl: null,
+        },
+        {
+          id: "skill-1",
+          type: "skill",
+          score: 90,
+          title: "Standup Writer",
+          href: "/PAP/skills/standup-writer",
+          matchedFields: ["folder"],
+          sourceLabel: "Folder: Operations",
+          snippet: null,
+          snippets: [],
+          skill: {
+            id: "skill-1",
+            key: "paperclip/standup-writer",
+            slug: "standup-writer",
+            name: "Standup Writer",
+            folder: { id: "folder-2", name: "Operations", path: "Operations" },
+            updatedAt: new Date().toISOString(),
+          },
+          updatedAt: new Date().toISOString(),
+          previewImageUrl: null,
+        },
+      ],
+    };
+    mockSearchApi.search.mockResolvedValue(quickSearchResponse);
+
+    const { root } = renderWithQueryClient(<CommandPalette />, container, (queryClient) => {
+      queryClient.setQueryData(
+        queryKeys.companySearch.search("company-1", "standup", "all", 12, 0),
+        quickSearchResponse,
+      );
+    });
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, bubbles: true }));
+    });
+
+    const input = container.querySelector('input[aria-label="Command search"]') as HTMLInputElement;
+    act(() => {
+      const nativeSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      nativeSetter.call(input, "standup");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    await waitForAssertion(() => {
+      expect(mockSearchApi.search).toHaveBeenCalledWith("company-1", {
+        q: "standup",
+        scope: "all",
+        limit: 12,
+      });
+      expect(container.textContent).toContain("Daily standup digest");
+      expect(container.textContent).toContain("Reporting");
+      expect(container.textContent).toContain("Standup Writer");
+      expect(container.textContent).toContain("Operations");
+    });
+
+    act(() => {
+      container
+        .querySelector('button[data-testid="command-routine-match"]')!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await waitForAssertion(() => {
+      expect(navigateState.navigate).toHaveBeenCalledWith("/PAP/routines/routine-1");
     });
 
     act(() => {
