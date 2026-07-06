@@ -38,6 +38,11 @@ import {
   updateCompanyBrandingSchema,
   companyArtifactsQuerySchema,
   companyArtifactsResponseSchema,
+  // Folder
+  createFolderSchema,
+  updateFolderSchema,
+  moveFolderSchema,
+  moveFolderItemSchema,
   // Routine
   createRoutineSchema,
   updateRoutineSchema,
@@ -755,6 +760,7 @@ const CREATED_OPERATIONS = new Set([
   "POST /api/admin/users/{userId}/promote-instance-admin",
   "POST /api/plugins/install",
   "POST /api/instance/database-backups",
+  "POST /api/companies/{companyId}/folders",
 ]);
 
 const ACCEPTED_OPERATIONS = new Set([
@@ -2132,6 +2138,75 @@ registry.registerPath({
   summary: "Delete a routine trigger",
   request: { params: z.object({ id: z.string() }) },
   responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/folders",
+  tags: ["folders"],
+  summary: "List folders of a kind with item counts",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: z.object({ kind: z.enum(["routine", "skill"]) }),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/folders",
+  tags: ["folders"],
+  summary: "Create a folder",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(createFolderSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/api/companies/{companyId}/folders/{folderId}",
+  tags: ["folders"],
+  summary: "Rename or restyle a folder",
+  request: {
+    params: z.object({ companyId: z.string(), folderId: z.string() }),
+    body: jsonBody(updateFolderSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/api/companies/{companyId}/folders/{folderId}",
+  tags: ["folders"],
+  summary: "Delete a folder, moving its items to Unfiled",
+  request: { params: z.object({ companyId: z.string(), folderId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/folders/items/move",
+  tags: ["folders"],
+  summary: "Move a routine or skill into a folder",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(moveFolderItemSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 404: r.notFound },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/folders/{folderId}/move",
+  tags: ["folders"],
+  summary: "Reorder a folder",
+  request: {
+    params: z.object({ companyId: z.string(), folderId: z.string() }),
+    body: jsonBody(moveFolderSchema),
+  },
+  responses: { 200: r.ok(), 400: r.badRequest, 401: r.unauthorized, 404: r.notFound },
 });
 
 registry.registerPath({

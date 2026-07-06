@@ -1,4 +1,4 @@
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, companies, companySkills, folders, issues, projects, routines } from "@paperclipai/db";
@@ -848,7 +848,7 @@ export function companySearchService(db: Db) {
               eq(folders.kind, "routine"),
             ),
           )
-          .where(and(eq(routines.companyId, companyId), routineCondition))
+          .where(and(eq(routines.companyId, companyId), ne(routines.status, "archived"), routineCondition))
           .orderBy(desc(routines.updatedAt), desc(routines.id))
           .limit(fetchLimit)
         : [];

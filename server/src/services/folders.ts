@@ -31,6 +31,24 @@ function normalizeColor(color: string | null | undefined) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function isFolderNameUniqueViolation(error: unknown) {
+  const seen = new Set<unknown>();
+  let current = error;
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const maybe = current as {
+      code?: string;
+      constraint?: string;
+      constraint_name?: string;
+      cause?: unknown;
+    };
+    const constraint = maybe.constraint ?? maybe.constraint_name;
+    if (maybe.code === "23505" && constraint === "folders_company_kind_name_uq") return true;
+    current = maybe.cause;
+  }
+  return false;
+}
+
 export function folderService(db: Db) {
   async function getFolder(companyId: string, folderId: string) {
     return db
@@ -122,7 +140,14 @@ export function folderService(db: Db) {
         position,
       })
       .returning()
-      .then((rows) => rows[0] ?? null);
+      .then((rows) => rows[0] ?? null)
+      .catch((error: unknown) => {
+        // assertNoNameConflict is racy; the unique index is the backstop.
+        if (isFolderNameUniqueViolation(error)) {
+          throw conflict("Folder name already exists for this kind");
+        }
+        throw error;
+      });
     if (!row) throw notFound("Failed to create folder");
     return mapFolder(row);
   }
@@ -144,7 +169,13 @@ export function folderService(db: Db) {
       })
       .where(and(eq(folders.companyId, companyId), eq(folders.id, folderId)))
       .returning()
-      .then((rows) => rows[0] ?? null);
+      .then((rows) => rows[0] ?? null)
+      .catch((error: unknown) => {
+        if (isFolderNameUniqueViolation(error)) {
+          throw conflict("Folder name already exists for this kind");
+        }
+        throw error;
+      });
     return row ? mapFolder(row) : null;
   }
 
