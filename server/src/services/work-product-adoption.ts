@@ -472,22 +472,25 @@ export async function adoptWorkProductsForRun(input: {
           ));
       }
 
-      if (existing) {
-        await tx
-          .update(issueWorkProducts)
-          .set(values)
-          .where(eq(issueWorkProducts.id, existing.id));
-        return "updated" as const;
-      }
-
       await tx
         .insert(issueWorkProducts)
         .values({
           ...values,
           createdByRunId: input.runId,
           createdAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            issueWorkProducts.companyId,
+            issueWorkProducts.issueId,
+            issueWorkProducts.type,
+            issueWorkProducts.provider,
+            issueWorkProducts.externalId,
+          ],
+          set: values,
         });
-      return "created" as const;
+
+      return existing ? "updated" as const : "created" as const;
     });
 
     if (outcome === "created") created += 1;

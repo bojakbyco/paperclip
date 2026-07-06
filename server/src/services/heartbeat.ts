@@ -8672,7 +8672,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         heartbeat.skipTimerWhenNoActionableWork ??
           heartbeat.requireActionableTimerWork ??
           heartbeat.issueOnlyTimer,
-        true,
+        false,
       ),
       maxDailyRuns: normalizeOptionalNonNegativeInteger(
         heartbeat.maxDailyRuns ?? heartbeat.dailyRunLimit ?? heartbeat.dailyRunCap ?? heartbeat.maxRunsPerDay,

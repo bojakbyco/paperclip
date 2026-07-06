@@ -251,4 +251,34 @@ describeEmbeddedPostgres("work product adoption", () => {
       reviewState: "needs_board_review",
     });
   });
+
+  it("deduplicates concurrent adoption for the same external work product", async () => {
+    await seedBase();
+
+    const input = {
+      db,
+      companyId,
+      issueId,
+      runId,
+      projectId,
+      executionWorkspaceId,
+      resultJson: {
+        pullRequestUrl: "https://github.com/paperclipai/paperclip/pull/11218",
+      },
+    };
+
+    await Promise.all([
+      adoptWorkProductsForRun(input),
+      adoptWorkProductsForRun(input),
+    ]);
+
+    const rows = await db.select().from(issueWorkProducts).where(eq(issueWorkProducts.issueId, issueId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      type: "pull_request",
+      provider: "github",
+      externalId: "paperclipai/paperclip#11218",
+      isPrimary: true,
+    });
+  });
 });
