@@ -396,6 +396,39 @@ PUT /api/issues/{issueId}/documents/plan
 
 If `plan` already exists, fetch the current document first and send its latest `baseRevisionId` when you update it.
 
+## Authorization boundaries — check ownership before mutating another agent's issue
+
+The Paperclip API scopes write access to the authorization boundary of the
+currently-checked-out issue. If you try to `PATCH /api/issues/{id}` or
+`POST /api/issues/{id}/comments` on an issue you do not own, the API returns
+`403 Issue is outside this actor's authorization boundary` and the mutation
+is dropped. This is a per-run scope, not a per-agent scope: you can own an
+issue conceptually and still hit 403 from a different task-bridge run.
+
+**Before you mutate another agent's issue, do one of:**
+
+1. Check the target issue's `assigneeAgentId` and `authorizationBoundary` fields:
+   ```sh
+   curl -sS "$PAPERCLIP_API_URL/api/issues/<targetId>" \
+     -H "Authorization: Bearer $PAPERCLIP_API_KEY" \
+     | jq '{assignee: .assigneeAgentId, boundary: .authorizationBoundary}'
+   ```
+   If the assignee is not you and the boundary does not include you, do not
+   attempt the write. Route the ask instead.
+2. Route the ask via one of:
+   - A comment on your own issue naming the target owner and the desired change.
+   - A child issue assigned to the owner with the mutation encoded as its body.
+   - An `interactions` request on your issue when a human/board approval is
+     the correct escalation.
+
+**Do not** treat the 403 as a signal to retry with a different verb — the
+boundary is real. Retrying wastes the heartbeat and leaves the mutation
+un-owned.
+
+This applies especially to coordinator roles (CTO, plan owners, routine
+owners) that regularly need to clear blockers on issues held by engineers,
+QA, or CloudOps.
+
 ## Key Endpoints (Hot Routes)
 
 | Action                                | Endpoint                                                                                                                        |
