@@ -29,8 +29,8 @@ UPDATE "pipeline_case_events"
 SET "payload" = '{}'::jsonb
 WHERE "payload" IS NULL;--> statement-breakpoint
 ALTER TABLE "pipeline_case_events" ALTER COLUMN "payload" SET NOT NULL;--> statement-breakpoint
-ALTER TABLE "pipeline_case_events" ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone DEFAULT now();--> statement-breakpoint
-ALTER TABLE "pipeline_case_events" ADD COLUMN IF NOT EXISTS "created_at" timestamp with time zone DEFAULT now();--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ADD COLUMN IF NOT EXISTS "created_at" timestamp with time zone;--> statement-breakpoint
 UPDATE "pipeline_case_events"
 SET "created_at" = coalesce(
   "pipeline_case_events"."updated_at",
@@ -41,6 +41,12 @@ SET "created_at" = coalesce(
 FROM "pipeline_cases"
 WHERE "pipeline_case_events"."case_id" = "pipeline_cases"."id"
   AND "pipeline_case_events"."created_at" IS NULL;--> statement-breakpoint
+UPDATE "pipeline_case_events"
+SET "updated_at" = "created_at"
+WHERE "updated_at" IS NULL;--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ALTER COLUMN "updated_at" SET DEFAULT now();--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ALTER COLUMN "updated_at" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ALTER COLUMN "created_at" SET DEFAULT now();--> statement-breakpoint
 ALTER TABLE "pipeline_case_events" ALTER COLUMN "created_at" SET NOT NULL;--> statement-breakpoint
 DROP INDEX IF EXISTS "pipeline_cases_parent_request_key_uq";--> statement-breakpoint
 CREATE UNIQUE INDEX IF NOT EXISTS "pipeline_cases_parent_request_key_uq" ON "pipeline_cases" USING btree ("parent_case_id","request_key") WHERE "pipeline_cases"."request_key" is not null and "pipeline_cases"."retired_at" is null;--> statement-breakpoint

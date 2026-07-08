@@ -277,9 +277,11 @@ WHERE "pipeline_cases"."id" = unique_candidates."id"
     WHERE "existing_cases"."pipeline_id" = "pipeline_cases"."pipeline_id"
       AND "existing_cases"."case_key" = unique_candidates."candidate"
   );--> statement-breakpoint
-UPDATE "pipeline_cases"
-SET "case_key" = "id"::text
-WHERE "case_key" IS NULL;--> statement-breakpoint
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM "pipeline_cases" WHERE "case_key" IS NULL) THEN
+    RAISE EXCEPTION 'Cannot backfill pipeline_cases.case_key for existing rows without fields key or origin issue identifier';
+  END IF;
+END $$;--> statement-breakpoint
 ALTER TABLE "pipeline_cases" ALTER COLUMN "case_key" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "pipeline_cases" ADD COLUMN IF NOT EXISTS "parent_case_id" uuid;--> statement-breakpoint
 ALTER TABLE "pipeline_cases" ADD COLUMN IF NOT EXISTS "lease_expires_at" timestamp with time zone;--> statement-breakpoint
@@ -338,8 +340,8 @@ UPDATE "pipeline_case_events"
 SET "payload" = '{}'::jsonb
 WHERE "payload" IS NULL;--> statement-breakpoint
 ALTER TABLE "pipeline_case_events" ALTER COLUMN "payload" SET NOT NULL;--> statement-breakpoint
-ALTER TABLE "pipeline_case_events" ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone DEFAULT now();--> statement-breakpoint
-ALTER TABLE "pipeline_case_events" ADD COLUMN IF NOT EXISTS "created_at" timestamp with time zone DEFAULT now();--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ADD COLUMN IF NOT EXISTS "updated_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ADD COLUMN IF NOT EXISTS "created_at" timestamp with time zone;--> statement-breakpoint
 UPDATE "pipeline_case_events"
 SET "created_at" = coalesce(
   "pipeline_case_events"."updated_at",
@@ -350,6 +352,12 @@ SET "created_at" = coalesce(
 FROM "pipeline_cases"
 WHERE "pipeline_case_events"."case_id" = "pipeline_cases"."id"
   AND "pipeline_case_events"."created_at" IS NULL;--> statement-breakpoint
+UPDATE "pipeline_case_events"
+SET "updated_at" = "created_at"
+WHERE "updated_at" IS NULL;--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ALTER COLUMN "updated_at" SET DEFAULT now();--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ALTER COLUMN "updated_at" SET NOT NULL;--> statement-breakpoint
+ALTER TABLE "pipeline_case_events" ALTER COLUMN "created_at" SET DEFAULT now();--> statement-breakpoint
 ALTER TABLE "pipeline_case_events" ALTER COLUMN "created_at" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "pipeline_cases" ADD COLUMN IF NOT EXISTS "lease_agent_id" uuid;--> statement-breakpoint
 ALTER TABLE "pipeline_cases" ADD COLUMN IF NOT EXISTS "created_by_agent_id" uuid;--> statement-breakpoint
