@@ -2141,7 +2141,11 @@ function RequestItemVerdictsCard({
       .filter(([, draft]) => requireReasonOn.has(draft.verdict) && draft.reason.trim().length === 0)
       .map(([id]) => id),
   );
-  const canApply = draftCount > 0 && invalidDraftIds.size === 0 && !working && Boolean(onSubmitInteractionVerdicts);
+  // Apply is enabled as soon as there is ≥1 draft (spec §1). If a required
+  // reject reason is missing, clicking Apply reveals the inline error instead
+  // of silently submitting — the reason gates the actual submit (spec AC).
+  const hasDrafts = draftCount > 0 && !working && Boolean(onSubmitInteractionVerdicts);
+  const canApply = hasDrafts && invalidDraftIds.size === 0;
 
   function toggleDraft(itemId: string, verdict: RequestItemVerdictValue) {
     setDrafts((current) => {
@@ -2372,7 +2376,7 @@ function RequestItemVerdictsCard({
               size="sm"
               variant="default"
               aria-disabled={!canApply}
-              disabled={!canApply}
+              disabled={!hasDrafts}
               onClick={() => void handleApply()}
             >
               {working ? (
