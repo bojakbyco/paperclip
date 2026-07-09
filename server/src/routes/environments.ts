@@ -903,6 +903,9 @@ export function environmentRoutes(
         res.status(404).json({ error: "Environment not found" });
         return;
       }
+      if (latestImpact.activeRuntimeUse.hasActiveRuntimeUse) {
+        rejectEnvironmentDeleteActiveRuntimeUse(latestImpact);
+      }
       rejectEnvironmentDelete({ actor, environment: existing, impact: latestImpact });
     }
     await logInstanceEnvironmentActivity({

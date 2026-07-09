@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, like, ne, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
@@ -552,10 +552,6 @@ export function environmentService(db: Db) {
             and(
               eq(userSecretDeclarations.targetType, "environment"),
               eq(userSecretDeclarations.targetId, id),
-              or(
-                eq(userSecretDeclarations.configPath, "env"),
-                like(userSecretDeclarations.configPath, "env.%"),
-              ),
             ),
           );
 

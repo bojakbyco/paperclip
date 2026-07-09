@@ -1766,7 +1766,7 @@ export function environmentRuntimeService(
         .where(
           and(
             eq(environmentLeases.heartbeatRunId, heartbeatRunId),
-            inArray(environmentLeases.status, ["active"]),
+            eq(environmentLeases.status, "active"),
           ),
         );
       if (leaseRows.length === 0) {
@@ -1815,7 +1815,7 @@ export function environmentRuntimeService(
         .where(
           and(
             eq(environmentLeases.environmentId, environmentId),
-            inArray(environmentLeases.status, ["active"]),
+            eq(environmentLeases.status, "active"),
           ),
         );
       if (leaseRows.length === 0) return [];
