@@ -588,7 +588,7 @@ describe("codex execute", () => {
     const previousHome = process.env.HOME;
     process.env.HOME = root;
     await seedSharedCodexAuth(root);
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(2026, 3, 22, 22, 29, 0));
 
     try {
@@ -652,6 +652,7 @@ describe("codex execute", () => {
     await fs.writeFile(
       path.join(sharedCodexHome, "auth.json"),
       JSON.stringify({
+        refresh_token: "refresh-token-fixture-secret",
         tokens: {
           access_token: "access-token-fixture-secret",
           refresh_token: "refresh-token-fixture-secret",
@@ -664,8 +665,16 @@ describe("codex execute", () => {
     );
 
     const previousHome = process.env.HOME;
+    const previousPaperclipHome = process.env.PAPERCLIP_HOME;
+    const previousPaperclipInstanceId = process.env.PAPERCLIP_INSTANCE_ID;
+    const previousPaperclipInWorktree = process.env.PAPERCLIP_IN_WORKTREE;
+    const previousCodexHome = process.env.CODEX_HOME;
     process.env.HOME = root;
-    vi.useFakeTimers();
+    process.env.PAPERCLIP_HOME = path.join(root, "paperclip-home");
+    delete process.env.PAPERCLIP_INSTANCE_ID;
+    delete process.env.PAPERCLIP_IN_WORKTREE;
+    process.env.CODEX_HOME = sharedCodexHome;
+    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-09T12:00:00.000Z"));
 
     try {
@@ -716,6 +725,14 @@ describe("codex execute", () => {
       vi.useRealTimers();
       if (previousHome === undefined) delete process.env.HOME;
       else process.env.HOME = previousHome;
+      if (previousPaperclipHome === undefined) delete process.env.PAPERCLIP_HOME;
+      else process.env.PAPERCLIP_HOME = previousPaperclipHome;
+      if (previousPaperclipInstanceId === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
+      else process.env.PAPERCLIP_INSTANCE_ID = previousPaperclipInstanceId;
+      if (previousPaperclipInWorktree === undefined) delete process.env.PAPERCLIP_IN_WORKTREE;
+      else process.env.PAPERCLIP_IN_WORKTREE = previousPaperclipInWorktree;
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
       await fs.rm(root, { recursive: true, force: true });
     }
   });
