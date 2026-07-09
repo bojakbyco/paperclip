@@ -643,6 +643,9 @@ export function clipRoutes(db: Db, storage?: StorageService) {
     if (req.body.status === "published" && clip.status !== "published") {
       throw forbidden("Publishing clips requires platform moderation access");
     }
+    if (req.body.visibility === "public" && clip.visibility !== "public") {
+      throw forbidden("Public clip visibility requires platform moderation access");
+    }
     const actorInfo = getActorInfo(req);
     const updated = await svc.updateClip(clip.id, req.body, {
       actorType: actorInfo.actorType,
@@ -751,7 +754,11 @@ export function clipRoutes(db: Db, storage?: StorageService) {
     }
     if (!consumeClipRateLimit(req, res, "import")) return;
     const actor = actorForClip(req);
-    const clip = await svc.recordImportTelemetry(req.params.slug as string, req.body, actor);
+    const telemetryStatus = req.body.status ?? "previewed";
+    if (actor.actorType === "anonymous" && telemetryStatus !== "previewed") {
+      throw forbidden("Authenticated actor required for applied import telemetry");
+    }
+    const clip = await svc.recordImportTelemetry(req.params.slug as string, { ...req.body, status: telemetryStatus }, actor);
     await logActivity(db, {
       companyId: req.body.destinationCompanyId ?? clip.sourceCompanyId,
       actorType: actor.actorType === "agent" ? "agent" : actor.actorType === "user" ? "user" : "system",

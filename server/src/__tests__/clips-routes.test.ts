@@ -147,15 +147,15 @@ function publicClipFixture(input: { clipId: string; slug?: string }) {
   };
 }
 
-function createApp() {
+function createApp(actor: Record<string, unknown> = {
+  type: "board",
+  source: "local_implicit",
+  userId: "board",
+}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
-      type: "board",
-      source: "local_implicit",
-      userId: "board",
-    };
+    (req as any).actor = actor;
     next();
   });
   app.use("/api", clipRoutes({} as any));
@@ -212,7 +212,7 @@ describe("clip routes", () => {
     );
   });
 
-  it("rejects owner moderation and publish-status patches", async () => {
+  it("rejects owner moderation, publish-status, and public-visibility patches", async () => {
     const clipId = "33333333-3333-4333-8333-333333333333";
     const sourceCompanyId = "22222222-2222-4222-8222-222222222222";
     mockClipService.getClipById.mockResolvedValue({
@@ -228,10 +228,23 @@ describe("clip routes", () => {
     const publishRes = await request(createApp())
       .patch("/api/clips/" + clipId)
       .send({ status: "published" });
+    const visibilityRes = await request(createApp())
+      .patch("/api/clips/" + clipId)
+      .send({ visibility: "public" });
 
     expect(moderationRes.status).toBe(403);
     expect(publishRes.status).toBe(403);
+    expect(visibilityRes.status).toBe(403);
     expect(mockClipService.updateClip).not.toHaveBeenCalled();
+  });
+
+  it("rejects anonymous applied import telemetry", async () => {
+    const res = await request(createApp({ type: "none", source: "none" }))
+      .post("/api/public/clips/support-triage/import-telemetry")
+      .send({ status: "applied" });
+
+    expect(res.status).toBe(403);
+    expect(mockClipService.recordImportTelemetry).not.toHaveBeenCalled();
   });
 
   it("uses the clip source company when building import previews", async () => {
