@@ -1,7 +1,8 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   agents,
+  companySecrets,
   companySecretBindings,
   environmentCustomImageSetupSessions,
   environmentLeases,
@@ -10,6 +11,7 @@ import {
   instanceSettings,
   issues,
   projects,
+  userSecretDeclarations,
 } from "@paperclipai/db";
 import {
   ENVIRONMENT_DRIVERS,
@@ -178,6 +180,15 @@ function toEnvironmentLease(row: EnvironmentLeaseRow): EnvironmentLease {
 
 function countFromRows(rows: Array<{ count: number | string | null | undefined }>): number {
   return Number(rows[0]?.count ?? 0);
+}
+
+function readSshPrivateKeySecretIdFromEnvironment(row: EnvironmentRow): string | null {
+  if (row.driver !== "ssh") return null;
+  const config = cloneRecord(row.config, {}) ?? {};
+  const ref = config.privateKeySecretRef;
+  if (!ref || typeof ref !== "object" || Array.isArray(ref)) return null;
+  const secretId = (ref as Record<string, unknown>).secretId;
+  return typeof secretId === "string" && secretId.length > 0 ? secretId : null;
 }
 
 export function environmentService(db: Db) {
@@ -480,6 +491,92 @@ export function environmentService(db: Db) {
       return row ? toEnvironment(row) : null;
     },
 
+    removeIfDeletableWithCleanup: async (id: string): Promise<Environment | null> => {
+      const now = new Date();
+      return db.transaction(async (tx) => {
+        const row = await tx
+          .delete(environments)
+          .where(
+            and(
+              eq(environments.id, id),
+              ne(environments.driver, "local"),
+              sql`not exists (
+                select 1 from ${instanceSettings}
+                where ${instanceSettings.defaultEnvironmentId} = ${environments.id}
+              )`,
+              sql`not exists (
+                select 1 from ${environmentLeases}
+                where ${environmentLeases.environmentId} = ${environments.id}
+                  and ${environmentLeases.status} = 'active'
+              )`,
+              sql`not exists (
+                select 1 from ${environmentCustomImageSetupSessions}
+                where ${environmentCustomImageSetupSessions.environmentId} = ${environments.id}
+                  and ${environmentCustomImageSetupSessions.status} in ('starting', 'waiting_for_user', 'capturing')
+              )`,
+            ),
+          )
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (!row) return null;
+
+        await tx
+          .update(executionWorkspaces)
+          .set({
+            metadata: sql`jsonb_set(coalesce(${executionWorkspaces.metadata}, '{}'::jsonb), '{config,environmentId}', 'null'::jsonb, true)`,
+            updatedAt: now,
+          })
+          .where(sql`${executionWorkspaces.metadata} -> 'config' ->> 'environmentId' = ${id}`);
+
+        await tx
+          .update(issues)
+          .set({
+            executionWorkspaceSettings:
+              sql`jsonb_set(coalesce(${issues.executionWorkspaceSettings}, '{}'::jsonb), '{environmentId}', 'null'::jsonb, true)`,
+            updatedAt: now,
+          })
+          .where(sql`${issues.executionWorkspaceSettings} ->> 'environmentId' = ${id}`);
+
+        await tx
+          .update(projects)
+          .set({
+            executionWorkspacePolicy:
+              sql`jsonb_set(coalesce(${projects.executionWorkspacePolicy}, '{}'::jsonb), '{environmentId}', 'null'::jsonb, true)`,
+            updatedAt: now,
+          })
+          .where(sql`${projects.executionWorkspacePolicy} ->> 'environmentId' = ${id}`);
+
+        await tx
+          .delete(userSecretDeclarations)
+          .where(
+            and(
+              eq(userSecretDeclarations.targetType, "environment"),
+              eq(userSecretDeclarations.targetId, id),
+              or(
+                eq(userSecretDeclarations.configPath, "env"),
+                like(userSecretDeclarations.configPath, "env.%"),
+              ),
+            ),
+          );
+
+        await tx
+          .delete(companySecretBindings)
+          .where(
+            and(
+              eq(companySecretBindings.targetType, "environment"),
+              eq(companySecretBindings.targetId, id),
+            ),
+          );
+
+        const privateKeySecretId = readSshPrivateKeySecretIdFromEnvironment(row);
+        if (privateKeySecretId) {
+          await tx.delete(companySecrets).where(eq(companySecrets.id, privateKeySecretId));
+        }
+
+        return toEnvironment(row);
+      });
+    },
+
     getDeleteBlastRadius: async (id: string): Promise<EnvironmentDeleteBlastRadius | null> => {
       const environment = await db
         .select({
@@ -552,13 +649,16 @@ export function environmentService(db: Db) {
 
       const isManagedLocal = environment.driver === "local";
       const isInstanceDefault = countFromRows(instanceDefaultRows) > 0;
-      const activeLeaseCount = countFromRows(activeLeaseRows);
-      const activeCustomImageSetupSessionCount = countFromRows(activeSetupRows);
-      const hasActiveRuntimeUse = activeLeaseCount > 0 || activeCustomImageSetupSessionCount > 0;
       const deleteBlockedReasons: EnvironmentDeleteBlockedReason[] = [];
       if (isManagedLocal) deleteBlockedReasons.push("managed_local");
       if (isInstanceDefault) deleteBlockedReasons.push("instance_default");
-      if (hasActiveRuntimeUse) deleteBlockedReasons.push("active_runtime_use");
+      const activeLeaseCount = countFromRows(activeLeaseRows);
+      const activeCustomImageSetupSessionCount = countFromRows(activeSetupRows);
+      const hasActiveRuntimeUse =
+        activeLeaseCount > 0 || activeCustomImageSetupSessionCount > 0;
+      if (hasActiveRuntimeUse) {
+        deleteBlockedReasons.push("active_runtime_use");
+      }
 
       return {
         environmentId: id,
@@ -579,16 +679,6 @@ export function environmentService(db: Db) {
           hasActiveRuntimeUse,
         },
       };
-    },
-
-    releaseActiveLeasesForEnvironment: async (id: string): Promise<number> => {
-      const now = new Date();
-      const rows = await db
-        .update(environmentLeases)
-        .set({ status: "released", releasedAt: now, lastUsedAt: now, updatedAt: now })
-        .where(and(eq(environmentLeases.environmentId, id), eq(environmentLeases.status, "active")))
-        .returning();
-      return rows.length;
     },
 
     listLeases: async (

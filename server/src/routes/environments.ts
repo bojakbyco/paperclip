@@ -12,7 +12,6 @@ import {
   redactEnvironmentCustomImageTemplate,
   startEnvironmentCustomImageSetupSessionSchema,
   type EnvironmentDeleteBlastRadius,
-  type EnvironmentCustomImageSetupSessionStatus,
   updateEnvironmentSchema,
 } from "@paperclipai/shared";
 import { conflict, forbidden, unprocessable } from "../errors.js";
@@ -20,10 +19,8 @@ import { validate } from "../middleware/validate.js";
 import { logger } from "../middleware/logger.js";
 import {
   environmentCustomImageService,
-  issueService,
   instanceSettingsService,
   logActivity,
-  projectService,
 } from "../services/index.js";
 import {
   environmentCustomImageTerminalConnectionRegistry,
@@ -39,7 +36,6 @@ import {
   collectEnvironmentSecretRefs,
   normalizeEnvironmentConfigForPersistence,
   normalizeEnvironmentConfigForProbe,
-  readSshEnvironmentPrivateKeySecretId,
   type ParsedEnvironmentConfig,
 } from "../services/environment-config.js";
 import { probeEnvironment } from "../services/environment-probe.js";
@@ -49,17 +45,10 @@ import { getConfiguredSecretProvider } from "../secrets/configured-provider.js";
 import { assertBoardOrgAccess, getActorInfo } from "./authz.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 import { environmentService } from "../services/environments.js";
-import { executionWorkspaceService } from "../services/execution-workspaces.js";
+import { environmentRuntimeService } from "../services/environment-runtime.js";
 
-const ACTIVE_CUSTOM_IMAGE_SETUP_STATUSES = [
-  "starting",
-  "waiting_for_user",
-  "capturing",
-] as const satisfies readonly EnvironmentCustomImageSetupSessionStatus[];
-
-function isActiveCustomImageSetupStatus(status: EnvironmentCustomImageSetupSessionStatus): boolean {
-  return (ACTIVE_CUSTOM_IMAGE_SETUP_STATUSES as readonly string[]).includes(status);
-}
+const ACTIVE_CUSTOM_IMAGE_SETUP_STATUSES_FOR_DELETE: ReadonlySet<string> =
+  new Set(["starting", "waiting_for_user", "capturing"]);
 
 export function environmentRoutes(
   db: Db,
@@ -70,10 +59,10 @@ export function environmentRoutes(
   const customImages = environmentCustomImageService(db, {
     pluginWorkerManager: options.pluginWorkerManager,
   });
-  const executionWorkspaces = executionWorkspaceService(db);
-  const issues = issueService(db);
   const instanceSettings = instanceSettingsService(db);
-  const projects = projectService(db);
+  const environmentRuntime = environmentRuntimeService(db, {
+    pluginWorkerManager: options.pluginWorkerManager,
+  });
   const secrets = secretService(db);
   const strictSecretsMode = process.env.PAPERCLIP_SECRETS_STRICT_MODE === "true";
 
@@ -290,7 +279,72 @@ export function environmentRoutes(
     if (impact.staticReferences.isInstanceDefault) {
       return "Cannot delete the current instance default environment. Set a new default environment before deleting this one.";
     }
+    if (impact.activeRuntimeUse.hasActiveRuntimeUse) {
+      return "Cannot delete the environment while active runtime leases or setup sessions are still running. Retry with force after cleanup completes.";
+    }
     return null;
+  }
+
+  function parseEnvironmentDeleteForce(req: Request): boolean {
+    return Boolean(
+      req.body
+      && typeof req.body === "object"
+      && !Array.isArray(req.body)
+      && (req.body as { force?: unknown }).force === true,
+    );
+  }
+
+  function rejectEnvironmentDeleteActiveRuntimeUse(impact: EnvironmentDeleteBlastRadius): never {
+    throw conflict(
+      "Environment has active runtime leases or setup sessions. Repeat the delete request with force: true to clean up active runtime use before deletion.",
+      {
+        requiresForce: true,
+        activeRuntimeUse: impact.activeRuntimeUse,
+      },
+    );
+  }
+
+  async function cleanupActiveRuntimeUseBeforeEnvironmentDelete(input: {
+    environmentId: string;
+    impact: EnvironmentDeleteBlastRadius;
+  }) {
+    const releasedLeases = input.impact.activeRuntimeUse.activeLeaseCount > 0
+      ? await environmentRuntime.releaseActiveLeasesForEnvironment(input.environmentId, "released")
+      : [];
+    const failedLeaseCleanups = releasedLeases.filter((record) =>
+      record.lease.cleanupStatus === "failed"
+      || record.lease.status === "pending_cleanup"
+      || record.lease.status === "retained"
+    );
+    if (failedLeaseCleanups.length > 0) {
+      throw conflict(
+        "Environment delete could not clean up all active runtime leases. Retry after the failed lease cleanup is resolved.",
+        {
+          failedLeaseIds: failedLeaseCleanups.map((record) => record.lease.id),
+        },
+      );
+    }
+
+    if (input.impact.activeRuntimeUse.activeCustomImageSetupSessionCount > 0) {
+      const overview = await customImages.getOverview({ environmentId: input.environmentId });
+      if (overview.activeSession) {
+        const cancelled = await customImages.cancelSetupSession({
+          sessionId: overview.activeSession.id,
+          reason: "environment_deleted",
+        });
+        environmentCustomImageTerminalSessionStore.deleteBySetupSessionId(overview.activeSession.id);
+        environmentCustomImageTerminalConnectionRegistry.closeBySetupSessionId(
+          overview.activeSession.id,
+          "environment_deleted",
+        );
+        if (cancelled.status === "failed" || ACTIVE_CUSTOM_IMAGE_SETUP_STATUSES_FOR_DELETE.has(cancelled.status)) {
+          throw conflict(
+            "Environment delete could not cancel the active custom image setup session. Retry after the failed setup cleanup is resolved.",
+            { setupSessionId: cancelled.id },
+          );
+        }
+      }
+    }
   }
 
   function rejectEnvironmentDelete(input: {
@@ -824,38 +878,22 @@ export function environmentRoutes(
       res.status(404).json({ error: "Environment not found" });
       return;
     }
-
-    const hasStaticBlocker = impact.deleteBlockedReasons.some(
-      (r) => r === "managed_local" || r === "instance_default",
-    );
-    if (hasStaticBlocker) {
+    const forceDelete = parseEnvironmentDeleteForce(req);
+    const staticDeleteBlockedReasons = impact.deleteBlockedReasons.filter((reason) => reason !== "active_runtime_use");
+    if (staticDeleteBlockedReasons.length > 0) {
       rejectEnvironmentDelete({ actor, environment: existing, impact });
     }
-
-    const hasRuntimeBlocker = impact.deleteBlockedReasons.includes("active_runtime_use");
-    const forceDelete = req.query.force === "true";
-    if (hasRuntimeBlocker && !forceDelete) {
-      rejectEnvironmentDelete({ actor, environment: existing, impact });
-    }
-
-    if (hasRuntimeBlocker && forceDelete) {
-      const overview = await customImages.getOverview({ environmentId: existing.id });
-      if (overview.activeSession) {
-        const cancelled = await customImages.cancelSetupSession({
-          sessionId: overview.activeSession.id,
-          reason: "environment_force_delete",
-        });
-        if (isActiveCustomImageSetupStatus(cancelled.status)) {
-          throw conflict(
-            "Active custom image setup session could not be cancelled. Retry or wait for setup to complete before deleting.",
-            { deleteBlockedReasons: ["active_runtime_use"] },
-          );
-        }
+    if (impact.activeRuntimeUse.hasActiveRuntimeUse) {
+      if (!forceDelete) {
+        rejectEnvironmentDeleteActiveRuntimeUse(impact);
       }
-      await svc.releaseActiveLeasesForEnvironment(existing.id);
+      await cleanupActiveRuntimeUseBeforeEnvironmentDelete({
+        environmentId: existing.id,
+        impact,
+      });
     }
 
-    const removed = await svc.removeIfDeletable(existing.id);
+    const removed = await svc.removeIfDeletableWithCleanup(existing.id);
     if (!removed) {
       const latestImpact = await svc.getDeleteBlastRadius(existing.id);
       if (!latestImpact) {
@@ -863,29 +901,6 @@ export function environmentRoutes(
         return;
       }
       rejectEnvironmentDelete({ actor, environment: existing, impact: latestImpact });
-    }
-    const companyIds = await instanceSettings.listCompanyIds();
-    await Promise.all(
-      companyIds.flatMap((companyId) => [
-        executionWorkspaces.clearEnvironmentSelection(companyId, existing.id),
-        issues.clearExecutionWorkspaceEnvironmentSelection(companyId, existing.id),
-        projects.clearExecutionWorkspaceEnvironmentSelection(companyId, existing.id),
-        secrets.syncEnvBindingsForTarget(
-          companyId,
-          { targetType: "environment", targetId: existing.id },
-          {},
-        ),
-        secrets.syncSecretRefsForTarget(
-          companyId,
-          { targetType: "environment", targetId: existing.id },
-          [],
-          { replaceAll: true },
-        ),
-      ]),
-    );
-    const secretId = readSshEnvironmentPrivateKeySecretId(existing);
-    if (secretId) {
-      await secrets.remove(secretId);
     }
     await logInstanceEnvironmentActivity({
       actor,
