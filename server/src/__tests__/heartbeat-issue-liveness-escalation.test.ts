@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
+  agentRuntimeState,
   activityLog,
   agents,
   agentWakeupRequests,
@@ -76,6 +77,77 @@ if (!embeddedPostgresSupport.supported) {
   );
 }
 
+function errorHasPostgresCode(error: unknown, code: string): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!current || typeof current !== "object") return false;
+    const record = current as { code?: unknown; cause?: unknown };
+    if (record.code === code) return true;
+    current = record.cause;
+  }
+  return false;
+}
+
+async function truncateCompaniesWithDeadlockRetry(db: ReturnType<typeof createDb>) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      await db.execute(sql.raw(`TRUNCATE TABLE "companies" CASCADE`));
+      return;
+    } catch (error) {
+      if (!errorHasPostgresCode(error, "40P01") || attempt === 4) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+    }
+  }
+}
+
+async function waitForHeartbeatRunQuiescence(db: ReturnType<typeof createDb>) {
+  let idlePolls = 0;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const pendingRuns = await db
+      .select({ id: heartbeatRuns.id })
+      .from(heartbeatRuns)
+      .leftJoin(
+        agentRuntimeState,
+        and(
+          eq(agentRuntimeState.agentId, heartbeatRuns.agentId),
+          eq(agentRuntimeState.lastRunId, heartbeatRuns.id),
+        ),
+      )
+      .where(or(
+        inArray(heartbeatRuns.status, ["queued", "running"]),
+        and(
+          inArray(heartbeatRuns.status, ["succeeded", "failed", "cancelled", "timed_out"]),
+          isNull(agentRuntimeState.agentId),
+          sql`not exists (
+            select 1
+            from "heartbeat_runs" newer
+            where newer."agent_id" = ${heartbeatRuns.agentId}
+              and newer."status" in ('succeeded', 'failed', 'cancelled', 'timed_out')
+              and newer."finished_at" is not null
+              and (
+                newer."finished_at" > ${heartbeatRuns.finishedAt}
+                or (
+                  newer."finished_at" = ${heartbeatRuns.finishedAt}
+                  and newer."created_at" > ${heartbeatRuns.createdAt}
+                )
+              )
+          )`,
+        ),
+      ))
+      .limit(1);
+
+    if (pendingRuns.length === 0) {
+      idlePolls += 1;
+      if (idlePolls >= 3) break;
+    } else {
+      idlePolls = 0;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
   let db: ReturnType<typeof createDb>;
@@ -88,22 +160,9 @@ describeEmbeddedPostgres("heartbeat issue graph liveness escalation", () => {
   afterEach(async () => {
     vi.clearAllMocks();
     runningProcesses.clear();
-    let idlePolls = 0;
-    for (let attempt = 0; attempt < 100; attempt += 1) {
-      const runs = await db
-        .select({ status: heartbeatRuns.status })
-        .from(heartbeatRuns);
-      const hasActiveRun = runs.some((run) => run.status === "queued" || run.status === "running");
-      if (!hasActiveRun) {
-        idlePolls += 1;
-        if (idlePolls >= 3) break;
-      } else {
-        idlePolls = 0;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
+    await waitForHeartbeatRunQuiescence(db);
     await new Promise((resolve) => setTimeout(resolve, 50));
-    await db.execute(sql.raw(`TRUNCATE TABLE "companies" CASCADE`));
+    await truncateCompaniesWithDeadlockRetry(db);
     await instanceSettingsService(db).updateExperimental({
       enableIssueGraphLivenessAutoRecovery: false,
       enableIsolatedWorkspaces: false,
