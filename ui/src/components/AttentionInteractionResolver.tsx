@@ -11,6 +11,8 @@ import {
   type IssueThreadInteraction,
   type RequestCheckboxConfirmationInteraction,
   type RequestConfirmationInteraction,
+  type RequestItemVerdictsInteraction,
+  type RequestItemVerdictValue,
   type SuggestTasksInteraction,
 } from "../lib/issue-thread-interactions";
 import { IssueThreadInteractionCard } from "./IssueThreadInteractionCard";
@@ -91,6 +93,14 @@ export function AttentionInteractionResolver({
     onSuccess: invalidate,
   });
 
+  const verdictsMutation = useMutation({
+    mutationFn: (input: {
+      interactionId: string;
+      verdicts: { id: string; verdict: RequestItemVerdictValue; reason?: string }[];
+    }) => issuesApi.submitInteractionVerdicts(issueId, input.interactionId, input.verdicts),
+    onSuccess: invalidate,
+  });
+
   if (isLoading) {
     return (
       <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground">
@@ -124,6 +134,9 @@ export function AttentionInteractionResolver({
       }
       onCancelInteraction={(target: AskUserQuestionsInteraction) =>
         cancelMutation.mutateAsync({ interactionId: target.id }).then(() => undefined)
+      }
+      onSubmitInteractionVerdicts={(target: RequestItemVerdictsInteraction, verdicts) =>
+        verdictsMutation.mutateAsync({ interactionId: target.id, verdicts }).then(() => undefined)
       }
     />
   );

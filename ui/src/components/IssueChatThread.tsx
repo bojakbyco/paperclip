@@ -65,6 +65,8 @@ import type {
   IssueThreadInteraction,
   RequestCheckboxConfirmationInteraction,
   RequestConfirmationInteraction,
+  RequestItemVerdictsInteraction,
+  RequestItemVerdictValue,
   SuggestTasksInteraction,
 } from "../lib/issue-thread-interactions";
 import { buildIssueThreadInteractionSummary, isIssueThreadInteraction } from "../lib/issue-thread-interactions";
@@ -220,6 +222,10 @@ interface IssueChatMessageContext {
   ) => Promise<void> | void;
   onCancelInteraction?: (
     interaction: AskUserQuestionsInteraction,
+  ) => Promise<void> | void;
+  onSubmitInteractionVerdicts?: (
+    interaction: RequestItemVerdictsInteraction,
+    verdicts: { id: string; verdict: RequestItemVerdictValue; reason?: string }[],
   ) => Promise<void> | void;
   onUploadImage?: (file: File) => Promise<string>;
   issueStatus?: string;
@@ -516,6 +522,10 @@ interface IssueChatThreadProps {
   ) => Promise<void> | void;
   onCancelInteraction?: (
     interaction: AskUserQuestionsInteraction,
+  ) => Promise<void> | void;
+  onSubmitInteractionVerdicts?: (
+    interaction: RequestItemVerdictsInteraction,
+    verdicts: { id: string; verdict: RequestItemVerdictValue; reason?: string }[],
   ) => Promise<void> | void;
   composerRef?: Ref<IssueChatComposerHandle>;
   issueWorkMode?: IssueWorkMode;
@@ -2724,6 +2734,7 @@ function IssueChatSystemMessage({ message }: { message: ThreadMessage }) {
     onRejectInteraction,
     onSubmitInteractionAnswers,
     onCancelInteraction,
+    onSubmitInteractionVerdicts,
     onUploadImage,
     externalReferences,
   } = useContext(IssueChatCtx);
@@ -2782,6 +2793,7 @@ function IssueChatSystemMessage({ message }: { message: ThreadMessage }) {
             onRejectInteraction={onRejectInteraction}
             onSubmitInteractionAnswers={onSubmitInteractionAnswers}
             onCancelInteraction={onCancelInteraction}
+            onSubmitInteractionVerdicts={onSubmitInteractionVerdicts}
             onUploadImage={onUploadImage}
             externalReferences={externalReferences}
           />
@@ -4236,6 +4248,7 @@ export function IssueChatThread({
   onRejectInteraction,
   onSubmitInteractionAnswers,
   onCancelInteraction,
+  onSubmitInteractionVerdicts,
   composerRef,
   issueWorkMode,
   onWorkModeChange,
@@ -4768,6 +4781,7 @@ export function IssueChatThread({
   const stableOnRejectInteraction = useStableEvent(onRejectInteraction);
   const stableOnSubmitInteractionAnswers = useStableEvent(onSubmitInteractionAnswers);
   const stableOnCancelInteraction = useStableEvent(onCancelInteraction);
+  const stableOnSubmitInteractionVerdicts = useStableEvent(onSubmitInteractionVerdicts);
   const stableOnUploadImage = useStableEvent(imageUploadHandler);
 
   const chatCtx = useMemo<IssueChatMessageContext>(
@@ -4792,6 +4806,7 @@ export function IssueChatThread({
       onRejectInteraction: stableOnRejectInteraction,
       onSubmitInteractionAnswers: stableOnSubmitInteractionAnswers,
       onCancelInteraction: stableOnCancelInteraction,
+      onSubmitInteractionVerdicts: stableOnSubmitInteractionVerdicts,
       onUploadImage: stableOnUploadImage,
       issueStatus,
       successfulRunHandoff,
@@ -4819,6 +4834,7 @@ export function IssueChatThread({
       stableOnRejectInteraction,
       stableOnSubmitInteractionAnswers,
       stableOnCancelInteraction,
+      stableOnSubmitInteractionVerdicts,
       stableOnUploadImage,
       issueStatus,
       successfulRunHandoff,
