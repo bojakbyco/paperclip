@@ -212,7 +212,7 @@ describeEmbeddedPostgres("clipService", () => {
     expect(revisions.map((revision) => revision.revisionNumber)).toEqual([1, 2, 3]);
   });
 
-  it("queries creator profile clips by creator before applying limits", async () => {
+  it("queries creator profile clips by creator before applying limits without exposing unlisted clips", async () => {
     const targetCompanyId = await seedCompany();
     const otherCompanyId = await seedCompany();
     const [targetProfile] = await db.insert(clipCreatorProfiles).values({
@@ -269,7 +269,27 @@ describeEmbeddedPostgres("clipService", () => {
 
     expect(profile?.clips.map((clip) => clip.slug).sort()).toEqual([
       "target-public-" + targetCompanyId.slice(0, 8),
-      "target-unlisted-" + targetCompanyId.slice(0, 8),
     ]);
+  });
+
+  it("does not serve blocked or failed revisions through public revision reads", async () => {
+    const companyId = await seedCompany();
+    const { clip } = await publishFixture(companyId);
+
+    const blocked = await svc.createRevision(clip.id, {
+      manifestChecksum: "sha256:manifest-blocked",
+      artifactChecksum: "sha256:artifact-blocked",
+      manifestPayload: { schema: "paperclip.clip/v1", revision: "blocked" },
+      securityReviewState: "blocked",
+    });
+    const failed = await svc.createRevision(clip.id, {
+      manifestChecksum: "sha256:manifest-failed",
+      artifactChecksum: "sha256:artifact-failed",
+      manifestPayload: { schema: "paperclip.clip/v1", revision: "failed" },
+      verificationState: "failed",
+    });
+
+    expect(await svc.getPublicRevision(clip.slug, blocked.revision.revisionNumber)).toBeNull();
+    expect(await svc.getPublicRevision(clip.slug, failed.revision.revisionNumber)).toBeNull();
   });
 });

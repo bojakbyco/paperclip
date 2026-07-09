@@ -50,6 +50,10 @@ function first<T>(rows: T[]): T | null {
   return rows[0] ?? null;
 }
 
+function isPubliclyReadableRevision(revision: typeof clipRevisions.$inferSelect) {
+  return revision.securityReviewState !== "blocked" && revision.verificationState !== "failed";
+}
+
 function publicMetrics(row: typeof clips.$inferSelect) {
   return {
     importCount: row.importCount,
@@ -150,7 +154,8 @@ export function clipService(db: Db) {
   async function getPublicCurrentRevision(clip: typeof clips.$inferSelect) {
     const revisionId = clip.latestApprovedRevisionId ?? clip.currentRevisionId;
     if (!revisionId) return null;
-    return first(await db.select().from(clipRevisions).where(eq(clipRevisions.id, revisionId)).limit(1));
+    const revision = first(await db.select().from(clipRevisions).where(eq(clipRevisions.id, revisionId)).limit(1));
+    return revision && isPubliclyReadableRevision(revision) ? revision : null;
   }
 
   async function getPublicClipBySlug(slug: string) {
@@ -230,7 +235,7 @@ export function clipService(db: Db) {
     const row = await getPublicClipBySlug(slug);
     if (!row) return null;
     const revision = await getRevisionByNumber(row.clip.id, revisionNumber);
-    if (!revision) return null;
+    if (!revision || !isPubliclyReadableRevision(revision)) return null;
     const dependencies = await db.select().from(clipDependencies).where(eq(clipDependencies.revisionId, revision.id));
     return serializePublicClip({
       clip: row.clip,
@@ -678,7 +683,6 @@ export function clipService(db: Db) {
     if (!profile) return null;
     const publicClips = await listPublic({
       creatorProfileId: profile.id,
-      includeUnlisted: true,
       limit: 100,
     });
     return {
