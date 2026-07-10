@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpDown, Check, CheckCircle2, Inbox, Layers, ListFilter } from "lucide-react";
 import type { Agent, AttentionItem } from "@paperclipai/shared";
+import { useNavigate } from "@/lib/router";
 import { attentionApi } from "../api/attention";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
@@ -35,6 +36,7 @@ import {
   type AttentionSortOrder,
 } from "../lib/attention";
 import { cn } from "../lib/utils";
+import { hasBlockingShortcutDialog, resolveAttentionQueueKeyAction } from "../lib/keyboardShortcuts";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { AttentionQueueRow } from "../components/AttentionQueueRow";
 import { IssueGroupHeader } from "../components/IssueGroupHeader";
@@ -53,6 +55,7 @@ export function WhatNeedsMe() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedAttentionId, setSelectedAttentionId] = useState<string | null>(null);
   const [autoExpandDone, setAutoExpandDone] = useState(false);
 
   // Toolbar preferences (persisted to localStorage, Inbox pattern).
@@ -69,6 +72,7 @@ export function WhatNeedsMe() {
 
   const { dismiss, snooze, restore } = useInboxDismissals(selectedCompanyId);
   const { pushToast } = useToastActions();
+  const navigate = useNavigate();
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Decisions" }]);
@@ -153,6 +157,21 @@ export function WhatNeedsMe() {
   }, [activeItems, filters, sortOrder, groupBy]);
 
   const visibleCount = useMemo(() => groups.reduce((sum, group) => sum + group.items.length, 0), [groups]);
+  const keyboardItems = useMemo(
+    () => groups.filter((group) => group.label === null || !collapsedGroupKeys.has(group.key)).flatMap((group) => group.items),
+    [collapsedGroupKeys, groups],
+  );
+
+  useEffect(() => {
+    if (selectedAttentionId && !keyboardItems.some((item) => item.id === selectedAttentionId)) {
+      setSelectedAttentionId(null);
+    }
+  }, [keyboardItems, selectedAttentionId]);
+
+  useEffect(() => {
+    if (!selectedAttentionId) return;
+    document.getElementById(`attention-row-${selectedAttentionId}`)?.scrollIntoView({ block: "nearest" });
+  }, [selectedAttentionId]);
 
   // Auto-expand the topmost inline-capable decision, once.
   useEffect(() => {
@@ -217,6 +236,50 @@ export function WhatNeedsMe() {
     setPendingRestore((prev) => new Set(prev).add(item.id));
     restore(item.dismissalKey);
   };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const action = resolveAttentionQueueKeyAction({
+        defaultPrevented: event.defaultPrevented,
+        key: event.key,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        target: event.target,
+        hasOpenDialog: hasBlockingShortcutDialog(document),
+        hasSelection: selectedAttentionId !== null,
+      });
+      if (action === "ignore" || keyboardItems.length === 0) return;
+
+      if (action === "next" || action === "previous") {
+        event.preventDefault();
+        const currentIndex = selectedAttentionId ? keyboardItems.findIndex((item) => item.id === selectedAttentionId) : -1;
+        const offset = action === "next" ? 1 : -1;
+        const nextIndex = currentIndex < 0
+          ? action === "next"
+            ? 0
+            : keyboardItems.length - 1
+          : (currentIndex + offset + keyboardItems.length) % keyboardItems.length;
+        setSelectedAttentionId(keyboardItems[nextIndex]?.id ?? null);
+        return;
+      }
+
+      const selectedItem = keyboardItems.find((item) => item.id === selectedAttentionId);
+      if (!selectedItem) return;
+      event.preventDefault();
+
+      if (action === "dismiss") {
+        handleDismiss(selectedItem);
+      } else if (isInlineResolvable(selectedItem)) {
+        setExpandedId((previous) => (previous === selectedItem.id ? null : selectedItem.id));
+      } else if (selectedItem.subject.href) {
+        navigate(selectedItem.subject.href);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [keyboardItems, navigate, selectedAttentionId]);
   const activeFilterCount = countActiveAttentionFilters(filters);
 
   if (!selectedCompanyId) {
@@ -363,11 +426,15 @@ export function WhatNeedsMe() {
                           item={item}
                           companyId={selectedCompanyId}
                           expanded={expandedId === item.id}
-                          onToggleExpand={() => setExpandedId((prev) => (prev === item.id ? null : item.id))}
+                          onToggleExpand={() => {
+                            setSelectedAttentionId(item.id);
+                            setExpandedId((prev) => (prev === item.id ? null : item.id));
+                          }}
                           onDismiss={handleDismiss}
                           onSnooze={handleSnooze}
                           agentMap={agentMap}
                           currentUserId={currentUserId}
+                          selected={selectedAttentionId === item.id}
                         />
                       ))}
                     </div>

@@ -197,11 +197,47 @@ describe("AttentionQueueRow", () => {
       />,
     );
 
-    const projectChip = container?.querySelector('[data-testid="attention-project-chip"]');
-    expect(projectChip?.textContent).toBe("Alpha");
-    expect(projectChip?.querySelector("button")).toBeNull();
+    const projectMeta = container?.querySelector('[data-testid="attention-project-meta"]');
+    expect(projectMeta?.textContent).toBe("Alpha");
+    expect(projectMeta?.querySelector("button")).toBeNull();
+    expect(projectMeta?.getAttribute("class")).not.toContain("border");
+    expect(projectMeta?.getAttribute("class")).not.toContain("bg-");
     expect(container?.querySelector('button[title="Filter by Alpha"]')).toBeNull();
     expect(container?.textContent?.match(/Alpha/g)).toHaveLength(1);
+  });
+
+  it("places the timestamp beside the row menu without a clock icon", () => {
+    render(
+      <AttentionQueueRow
+        item={buildItem()}
+        companyId="c1"
+        expanded={false}
+        onToggleExpand={noop}
+        onDismiss={noop}
+      />,
+    );
+
+    const menu = container?.querySelector('[aria-label="Row actions"]');
+    const menuArea = menu?.closest('[data-attention-menu="true"]');
+    expect(menuArea?.textContent).not.toBe("");
+    expect(container?.querySelector("svg.lucide-clock")).toBeNull();
+  });
+
+  it("uses square row edges and can show a keyboard selection ring", () => {
+    render(
+      <AttentionQueueRow
+        item={buildItem()}
+        companyId="c1"
+        expanded={false}
+        onToggleExpand={noop}
+        onDismiss={noop}
+        selected
+      />,
+    );
+
+    const row = container?.querySelector("[data-attention-row]");
+    expect(row?.getAttribute("class")).not.toContain("rounded");
+    expect(row?.getAttribute("class")).toContain("ring-ring");
   });
 
   it("renders collapsed inline decision verbs in the right-side action area with semantic variants", () => {

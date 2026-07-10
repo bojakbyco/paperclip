@@ -2,16 +2,13 @@ import { useState, type KeyboardEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlarmClock,
-  Boxes,
   ChevronDown,
   ChevronRight,
-  Clock,
   ExternalLink,
   Loader2,
   MoreHorizontal,
   RotateCcw,
   X,
-  type LucideIcon,
 } from "lucide-react";
 import type { Agent, AttentionDetailImage, AttentionItem } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
@@ -76,6 +73,7 @@ interface AttentionQueueRowProps {
   agentMap?: Map<string, Agent>;
   currentUserId?: string | null;
   userLabelMap?: ReadonlyMap<string, string> | null;
+  selected?: boolean;
 }
 
 export function AttentionQueueRow({
@@ -90,6 +88,7 @@ export function AttentionQueueRow({
   agentMap,
   currentUserId,
   userLabelMap,
+  selected = false,
 }: AttentionQueueRowProps) {
   const meta = sourceMeta(item.sourceKind);
   const tone = attentionToneStyle(item);
@@ -106,8 +105,6 @@ export function AttentionQueueRow({
   // explicit Open button and never toggle on a stray click.
   const expandable = inline;
   const verbs = item.decisionVerbs.slice(0, 3);
-  const workspaceLabel =
-    item.workspace && item.workspace.name !== item.project?.name ? item.workspace.name : null;
 
   const activate = () => {
     if (expandable) onToggleExpand();
@@ -123,10 +120,14 @@ export function AttentionQueueRow({
   return (
     <div
       className={cn(
-        "relative flex flex-col overflow-hidden rounded-lg border border-border bg-card",
-        "transition-colors hover:border-border/80",
+        "relative flex flex-col overflow-hidden border border-border bg-card",
+        "motion-safe:transition-[opacity,transform,border-color,background-color] motion-safe:duration-200 motion-safe:ease-out hover:border-border/80",
         isHidden && "bg-muted/30 opacity-80 hover:opacity-100",
+        selected && "border-ring ring-1 ring-ring",
       )}
+      id={`attention-row-${item.id}`}
+      data-attention-row
+      data-attention-row-id={item.id}
       data-attention-source={item.sourceKind}
       data-attention-severity={item.severity}
     >
@@ -188,20 +189,6 @@ export function AttentionQueueRow({
                     {item.relatedIssue.identifier}
                   </Link>
                 )}
-                {isHidden && snoozedUntil ? (
-                  <span
-                    className="ml-auto inline-flex items-center gap-1 text-(length:--text-nano) text-muted-foreground"
-                    title={`Reappears ${new Date(snoozedUntil).toLocaleString()}`}
-                  >
-                    <AlarmClock className="h-3 w-3" />
-                    Reappears {reappearLabel(snoozedUntil)}
-                  </span>
-                ) : (
-                  <span className="ml-auto inline-flex items-center gap-1 text-(length:--text-nano) text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    {relativeTime(item.activityAt)}
-                  </span>
-                )}
               </div>
 
               <div className="mt-1">
@@ -210,10 +197,9 @@ export function AttentionQueueRow({
                 </span>
                 <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{detailLine}</p>
 
-                {(item.project || workspaceLabel) && (
+                {item.project && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    {item.project && <ProjectChip project={item.project} />}
-                    {workspaceLabel && <Chip icon={Boxes} label={workspaceLabel} />}
+                    <ProjectMeta project={item.project} />
                   </div>
                 )}
               </div>
@@ -226,7 +212,17 @@ export function AttentionQueueRow({
         {/* Controls: kept as siblings (not inside the clickable header) so they
             never toggle expand and stay valid interactive targets. */}
         <div className="flex shrink-0 self-stretch flex-col items-end justify-between gap-2" data-attention-controls="true">
-          <div className="flex justify-end" data-attention-menu="true">
+          <div className="flex items-center justify-end gap-1" data-attention-menu="true">
+            {isHidden && snoozedUntil ? (
+              <span
+                className="text-(length:--text-nano) text-muted-foreground"
+                title={`Reappears ${new Date(snoozedUntil).toLocaleString()}`}
+              >
+                Reappears {reappearLabel(snoozedUntil)}
+              </span>
+            ) : (
+              <span className="text-(length:--text-nano) text-muted-foreground">{relativeTime(item.activityAt)}</span>
+            )}
             {!isHidden && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -300,7 +296,7 @@ export function AttentionQueueRow({
       </div>
 
       {inline && expanded && (
-        <div className="border-t border-border/60 bg-muted/20 px-4 py-3">
+        <div className="border-t border-border/60 bg-muted/20 px-4 py-3 motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-top-1 motion-safe:duration-200">
           <InlineResolver
             item={item}
             companyId={companyId}
@@ -321,32 +317,16 @@ function decisionVerbVariant(verb: AttentionItem["decisionVerbs"][number]): "def
   return "outline";
 }
 
-/** Small passive pill used for the project identity. */
-function ProjectChip({ project }: { project: NonNullable<AttentionItem["project"]> }) {
+/** Inline project identity keeps useful context without a competing badge. */
+function ProjectMeta({ project }: { project: NonNullable<AttentionItem["project"]> }) {
   return (
     <span
-      className="inline-flex max-w-(--sz-12rem) items-center gap-1.5 rounded-sm border border-border/70 bg-muted/40 px-1.5 py-0.5 text-(length:--text-nano) text-muted-foreground"
+      className="inline-flex max-w-(--sz-12rem) items-center gap-1.5 text-(length:--text-nano) text-muted-foreground"
       title={project.name}
-      data-testid="attention-project-chip"
+      data-testid="attention-project-meta"
     >
       <ProjectTile color={project.color} icon={project.icon} size="xs" />
       <span className="truncate">{project.name}</span>
-    </span>
-  );
-}
-
-/** Small passive pill used for workspace context. */
-function Chip({
-  icon: Icon,
-  label,
-}: {
-  icon: LucideIcon;
-  label: string;
-}) {
-  return (
-    <span className="inline-flex max-w-(--sz-12rem) items-center gap-1 rounded-sm border border-border/70 bg-muted/40 px-1.5 py-0.5 text-(length:--text-nano) text-muted-foreground">
-      <Icon className="h-3 w-3 shrink-0" />
-      <span className="truncate">{label}</span>
     </span>
   );
 }
