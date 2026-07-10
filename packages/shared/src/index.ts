@@ -51,12 +51,17 @@ export {
 } from "./responsible-user-denial.js";
 export type {
   AttentionDecisionVerb,
+  AttentionDetailImage,
   AttentionFeed,
   AttentionItem,
+  AttentionItemDetail,
+  AttentionItemDismissal,
+  AttentionProjectRef,
   AttentionSeverity,
   AttentionSourceKind,
   AttentionSubject,
   AttentionSubjectKind,
+  AttentionWorkspaceRef,
 } from "./types/attention.js";
 
 export type {
@@ -874,6 +879,7 @@ export type {
   SidebarBadges,
   SidebarOrderPreference,
   InboxDismissal,
+  InboxDismissalKind,
   AccessUserProfile,
   CompanyMemberRecord,
   CompanyMembersResponse,
