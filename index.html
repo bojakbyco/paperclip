@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paperclip WebKit annotation selection evidence</title>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { max-width: 1040px; margin: 0 auto; padding: 32px 20px 64px; line-height: 1.5; }
+      h1 { line-height: 1.15; }
+      .summary { padding: 16px; border: 1px solid #8886; border-radius: 12px; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-top: 24px; }
+      figure { margin: 0; }
+      img, video { display: block; width: 100%; border: 1px solid #8886; border-radius: 12px; background: #111; }
+      figcaption { margin-top: 8px; }
+      code { font-size: .95em; }
+    </style>
+  </head>
+  <body>
+    <h1>WebKit touch annotation selection evidence</h1>
+    <div class="summary">
+      <p><strong>Environment:</strong> Playwright WebKit 26.0 with iPhone 13 touch/coarse-pointer emulation.</p>
+      <p><strong>Assertion:</strong> the toolbar count is <code>0</code> during the active selection gesture and <code>1</code> after <code>touchend</code> plus the 120ms settle delay. The selected text remains exactly “markdown document body” in both states.</p>
+      <p>Desktop WebKit is an engine approximation; physical iOS Safari confirmation remains a separate QA gate.</p>
+    </div>
+    <div class="grid">
+      <figure>
+        <img src="01-during-drag-toolbar-deferred.png" alt="WebKit selection during drag with annotation toolbar deferred" />
+        <figcaption><strong>During drag:</strong> native selection remains active; Paperclip does not insert or reposition the annotation toolbar.</figcaption>
+      </figure>
+      <figure>
+        <img src="02-after-release-toolbar-settled.png" alt="WebKit selection after release with annotation toolbar visible" />
+        <figcaption><strong>After release:</strong> the toolbar appears after the short settle delay without collapsing the native selection.</figcaption>
+      </figure>
+    </div>
+    <h2>Recording</h2>
+    <video controls src="8f67aa0b0054ee170d41ad09f992d975.webm"></video>
+  </body>
+</html>
