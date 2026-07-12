@@ -4109,10 +4109,9 @@ export async function buildPaperclipWakePayload(input: {
           .then((rows) => rows[0] ?? null)
       : null);
   const pendingReports = issueId && input.runId
-    ? await issueReportService(input.db).consumePending({
+    ? await issueReportService(input.db).listPending({
         companyId: input.companyId,
         targetIssueId: issueId,
-        runId: input.runId,
       })
     : [];
   if (
@@ -11312,6 +11311,28 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
     } else {
       delete context[PAPERCLIP_WAKE_PAYLOAD_KEY];
     }
+    const pendingReportDeliveries = paperclipWakePayload?.reports.map((report) => ({
+      id: report.id,
+      originRunId: report.originRunId,
+    })) ?? [];
+    let pendingReportsAcknowledged = pendingReportDeliveries.length === 0;
+    const acknowledgePendingReports = async () => {
+      if (pendingReportsAcknowledged || !issueRef) return;
+      try {
+        await issueReportService(db).acknowledgePending({
+          companyId: agent.companyId,
+          targetIssueId: issueRef.id,
+          runId: run.id,
+          deliveries: pendingReportDeliveries,
+        });
+        pendingReportsAcknowledged = true;
+      } catch (error) {
+        logger.warn(
+          { err: error, runId: run.id, issueId: issueRef.id, reports: pendingReportDeliveries },
+          "failed to acknowledge delivered issue reports; reports will be retried",
+        );
+      }
+    };
     const taskMarkdown = buildPaperclipTaskMarkdown({
       issue: issueRef
         ? {
@@ -12809,6 +12830,7 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
                   : null,
               startedAt: meta.startedAt,
             });
+            await acknowledgePendingReports();
           },
           authToken: authToken ?? undefined,
         });
@@ -12895,6 +12917,9 @@ export function heartbeatService(db: Db, options: HeartbeatServiceOptions = {}) 
         outcome = "succeeded";
       } else {
         outcome = "failed";
+      }
+      if (outcome === "succeeded") {
+        await acknowledgePendingReports();
       }
 
       const nextSessionState = resolveNextSessionState({

@@ -34,7 +34,7 @@ describeEmbeddedPostgres("issue reports", () => {
     await tempDb?.cleanup();
   });
 
-  it("deduplicates fingerprints and consumes pending reports in the target heartbeat", async () => {
+  it("updates duplicate deliveries and acknowledges reports only after delivery", async () => {
     const companyId = randomUUID();
     const originAgentId = randomUUID();
     const targetAgentId = randomUUID();
@@ -149,6 +149,35 @@ describeEmbeddedPostgres("issue reports", () => {
     expect(await db.select().from(issueReports).where(eq(issueReports.targetIssueId, targetIssueId)))
       .toHaveLength(1);
 
+    const correctedRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: correctedRunId,
+      companyId,
+      agentId: originAgentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      contextSnapshot: { issueId: originIssueId, taskId: originIssueId },
+    });
+    const corrected = await service.create({
+      ...input,
+      originRunId: correctedRunId,
+      report: {
+        ...input.report,
+        payload: {
+          type: "audit.result",
+          summary: "Phase 1 passed after correction",
+          data: { passed: true, checks: 8 },
+        },
+        requestWake: false,
+      },
+    });
+    expect(corrected.deduplicated).toBe(true);
+    expect(corrected.report.id).toBe(first.report.id);
+    expect(corrected.report.originRunId).toBe(correctedRunId);
+    expect(corrected.report.payload.summary).toBe("Phase 1 passed after correction");
+    expect(corrected.report.wakeRequested).toBe(false);
+
     const payload = await buildPaperclipWakePayload({
       db,
       companyId,
@@ -159,13 +188,71 @@ describeEmbeddedPostgres("issue reports", () => {
       expect.objectContaining({
         id: first.report.id,
         originIssueId,
-        originRunId,
+        originRunId: correctedRunId,
         originAgentId,
         fingerprint: "phase-1-audit",
-        payload: expect.objectContaining({ type: "audit.result" }),
+        payload: expect.objectContaining({
+          type: "audit.result",
+          summary: "Phase 1 passed after correction",
+        }),
       }),
     ]);
 
+    const pending = await db.select().from(issueReports).where(eq(issueReports.id, first.report.id));
+    expect(pending[0]?.consumedByRunId).toBeNull();
+    expect(pending[0]?.consumedAt).toBeNull();
+
+    const latestRunId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: latestRunId,
+      companyId,
+      agentId: originAgentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      contextSnapshot: { issueId: originIssueId, taskId: originIssueId },
+    });
+    await service.create({
+      ...input,
+      originRunId: latestRunId,
+      report: {
+        ...input.report,
+        payload: {
+          type: "audit.result",
+          summary: "Phase 1 final result",
+          data: { passed: true, checks: 9 },
+        },
+      },
+    });
+    await service.acknowledgePending({
+      companyId,
+      targetIssueId,
+      runId: targetRunId,
+      deliveries: [{ id: first.report.id, originRunId: correctedRunId }],
+    });
+    const stillPending = await db.select().from(issueReports).where(eq(issueReports.id, first.report.id));
+    expect(stillPending[0]?.consumedByRunId).toBeNull();
+    expect(stillPending[0]?.consumedAt).toBeNull();
+
+    const latestPayload = await buildPaperclipWakePayload({
+      db,
+      companyId,
+      runId: targetRunId,
+      contextSnapshot: { issueId: targetIssueId, taskId: targetIssueId, wakeReason: "assignment" },
+    });
+    expect(latestPayload?.reports).toEqual([
+      expect.objectContaining({
+        id: first.report.id,
+        originRunId: latestRunId,
+        payload: expect.objectContaining({ summary: "Phase 1 final result" }),
+      }),
+    ]);
+    await service.acknowledgePending({
+      companyId,
+      targetIssueId,
+      runId: targetRunId,
+      deliveries: [{ id: first.report.id, originRunId: latestRunId }],
+    });
     const consumed = await db.select().from(issueReports).where(eq(issueReports.id, first.report.id));
     expect(consumed[0]?.consumedByRunId).toBe(targetRunId);
     expect(consumed[0]?.consumedAt).not.toBeNull();

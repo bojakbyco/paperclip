@@ -1,4 +1,5 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, or } from "drizzle-orm";
+import { isDeepStrictEqual } from "node:util";
 import type { Db } from "@paperclipai/db";
 import { heartbeatRuns, issueReports, issues } from "@paperclipai/db";
 import type { CreateIssueReport, IssueReport, IssueReportPayload } from "@paperclipai/shared";
@@ -103,6 +104,30 @@ export function issueReportService(db: Db) {
         ))
         .then((rows) => rows[0] ?? null);
       if (!existing) throw conflict("Issue report fingerprint already exists");
+      const deliveryChanged =
+        existing.originRunId !== input.originRunId
+        || existing.originAgentId !== input.originAgentId
+        || existing.wakeRequested !== input.report.requestWake
+        || !isDeepStrictEqual(existing.payload, input.report.payload);
+      if (deliveryChanged) {
+        const updatedAt = new Date();
+        const updated = await db
+          .update(issueReports)
+          .set({
+            originRunId: input.originRunId,
+            originAgentId: input.originAgentId,
+            payload: input.report.payload,
+            wakeRequested: input.report.requestWake,
+            consumedByRunId: null,
+            consumedAt: null,
+            updatedAt,
+          })
+          .where(eq(issueReports.id, existing.id))
+          .returning()
+          .then((rows) => rows[0] ?? null);
+        if (!updated) throw conflict("Issue report fingerprint already exists");
+        return { report: hydrateReport(updated), deduplicated: true };
+      }
       return { report: hydrateReport(existing), deduplicated: true };
     }
   }
@@ -116,35 +141,47 @@ export function issueReportService(db: Db) {
     return rows.map(hydrateReport);
   }
 
-  async function consumePending(input: {
+  async function listPending(input: {
+    companyId: string;
+    targetIssueId: string;
+    limit?: number;
+  }) {
+    const rows = await db
+      .select()
+      .from(issueReports)
+      .where(and(
+        eq(issueReports.companyId, input.companyId),
+        eq(issueReports.targetIssueId, input.targetIssueId),
+        isNull(issueReports.consumedAt),
+      ))
+      .orderBy(asc(issueReports.createdAt), asc(issueReports.id))
+      .limit(input.limit ?? DEFAULT_PENDING_REPORT_LIMIT);
+    return rows.map(hydrateReport);
+  }
+
+  async function acknowledgePending(input: {
     companyId: string;
     targetIssueId: string;
     runId: string;
-    limit?: number;
+    deliveries: Array<{ id: string; originRunId: string }>;
   }) {
-    return db.transaction(async (tx) => {
-      const pending = await tx
-        .select({ id: issueReports.id })
-        .from(issueReports)
-        .where(and(
-          eq(issueReports.companyId, input.companyId),
-          eq(issueReports.targetIssueId, input.targetIssueId),
-          isNull(issueReports.consumedAt),
-        ))
-        .orderBy(asc(issueReports.createdAt), asc(issueReports.id))
-        .limit(input.limit ?? DEFAULT_PENDING_REPORT_LIMIT)
-        .for("update", { skipLocked: true });
-      const ids = pending.map((row) => row.id);
-      if (ids.length === 0) return [];
-      const consumedAt = new Date();
-      const rows = await tx
-        .update(issueReports)
-        .set({ consumedByRunId: input.runId, consumedAt, updatedAt: consumedAt })
-        .where(and(inArray(issueReports.id, ids), isNull(issueReports.consumedAt)))
-        .returning();
-      return rows.map(hydrateReport);
-    });
+    if (input.deliveries.length === 0) return [];
+    const consumedAt = new Date();
+    const rows = await db
+      .update(issueReports)
+      .set({ consumedByRunId: input.runId, consumedAt, updatedAt: consumedAt })
+      .where(and(
+        eq(issueReports.companyId, input.companyId),
+        eq(issueReports.targetIssueId, input.targetIssueId),
+        or(...input.deliveries.map((delivery) => and(
+          eq(issueReports.id, delivery.id),
+          eq(issueReports.originRunId, delivery.originRunId),
+        ))),
+        isNull(issueReports.consumedAt),
+      ))
+      .returning();
+    return rows.map(hydrateReport);
   }
 
-  return { resolveOrigin, create, listForIssue, consumePending };
+  return { resolveOrigin, create, listForIssue, listPending, acknowledgePending };
 }
