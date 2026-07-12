@@ -2361,7 +2361,7 @@ async function listIssueBlockerAttentionMap(
     if (topLevelEdges.length === 0) {
       attentionMap.set(root.id, createIssueBlockerAttention({
         state: "needs_attention",
-        reason: "attention_required",
+        reason: "missing_blocker_path",
       }));
       continue;
     }
@@ -3352,6 +3352,21 @@ async function listIssueBlockedInboxAttentionMap(
 
     const blockerAttention = await listIssueBlockerAttentionMap(dbOrTx, companyId, [row]);
     const blockerState = blockerAttention.get(row.id);
+    if (row.status === "blocked" && blockerState?.reason === "missing_blocker_path") {
+      result.set(row.id, attentionBase({
+        state: "needs_attention",
+        reason: "blocked_without_blocker_path",
+        severity: "high",
+        stoppedSinceAt: row.updatedAt,
+        owner: { type: "unknown", agentId: null, userId: null, label: null },
+        action: {
+          label: "Add blocker or external owner",
+          detail: "Add an unresolved blocker edge or record external owner/action, then resume the issue.",
+        },
+        sourceIssue: source,
+      }));
+      continue;
+    }
     if (row.status === "blocked" && (blockerState?.state === "needs_attention" || blockerState?.state === "stalled")) {
       result.set(row.id, attentionBase({
         state: "needs_attention",
@@ -6006,6 +6021,18 @@ export function issueService(db: Db) {
       if (data.status === "in_progress" && !data.assigneeAgentId && !data.assigneeUserId) {
         throw unprocessable("in_progress issues require an assignee");
       }
+      if (data.status === "blocked") {
+        const unresolvedBlockerIssueIds = await listUnresolvedBlockerIssueIds(
+          db,
+          companyId,
+          blockedByIssueIds ?? [],
+        );
+        if (unresolvedBlockerIssueIds.length === 0 && !externalWaitFromDescription(issueData.description ?? null)) {
+          throw unprocessable(
+            "blocked issues require an unresolved blocker or external owner/action",
+          );
+        }
+      }
       return db.transaction(async (tx) => {
         const defaultCompanyGoal = await getDefaultCompanyGoal(tx, companyId);
         let projectWorkspaceId = issueData.projectWorkspaceId ?? null;
@@ -6288,6 +6315,24 @@ export function issueService(db: Db) {
           throw unprocessable("Issue is blocked by unresolved blockers", { unresolvedBlockerIssueIds });
         }
       }
+      const nextStatus = patch.status ?? existing.status;
+      if (nextStatus === "blocked") {
+        const unresolvedBlockerIssueIds = blockedByIssueIds !== undefined
+          ? await listUnresolvedBlockerIssueIds(dbOrTx, existing.companyId, blockedByIssueIds)
+          : (
+              await listIssueDependencyReadinessMap(dbOrTx, existing.companyId, [id])
+            ).get(id)?.unresolvedBlockerIssueIds ?? [];
+        const nextDescription = issueData.description !== undefined ? issueData.description : existing.description;
+        if (unresolvedBlockerIssueIds.length === 0 && !externalWaitFromDescription(nextDescription ?? null)) {
+          if (existing.status === "blocked" && blockedByIssueIds !== undefined && issueData.status === undefined) {
+            patch.status = "todo";
+          } else {
+            throw unprocessable(
+              "blocked issues require an unresolved blocker or external owner/action",
+            );
+          }
+        }
+      }
       const shouldValidateNextAssignee =
         Boolean(nextAssigneeAgentId) &&
         (issueData.assigneeAgentId !== undefined || patch.status === "in_progress");
@@ -6349,14 +6394,14 @@ export function issueService(db: Db) {
         });
       }
 
-      applyStatusSideEffects(issueData.status, patch);
-      if (issueData.status && issueData.status !== "done") {
+      applyStatusSideEffects(patch.status, patch);
+      if (patch.status && patch.status !== "done") {
         patch.completedAt = null;
       }
-      if (issueData.status && issueData.status !== "cancelled") {
+      if (patch.status && patch.status !== "cancelled") {
         patch.cancelledAt = null;
       }
-      if (issueData.status && issueData.status !== "in_progress") {
+      if (patch.status && patch.status !== "in_progress") {
         patch.checkoutRunId = null;
         patch.executionRunId = null;
         patch.executionAgentNameKey = null;

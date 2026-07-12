@@ -146,6 +146,24 @@ describeEmbeddedPostgres("issue blocker attention", () => {
     return runId;
   }
 
+  it("surfaces a blocked issue with zero blocker edges as a missing blocker path", async () => {
+    const { companyId } = await createCompany("PBZ");
+    const issueId = await insertIssue({
+      companyId,
+      identifier: "PBZ-1",
+      title: "Stranded blocked issue",
+      status: "blocked",
+    });
+
+    const issue = (await svc.list(companyId, { status: "blocked" })).find((row) => row.id === issueId);
+
+    expect(issue?.blockerAttention).toMatchObject({
+      state: "needs_attention",
+      reason: "missing_blocker_path",
+      unresolvedBlockerCount: 0,
+    });
+  });
+
   it("classifies a blocked parent as covered when its child has a running execution path", async () => {
     const { companyId, agentId } = await createCompany("PBC");
     const parentId = await insertIssue({ companyId, identifier: "PBC-1", title: "Parent", status: "blocked" });
