@@ -104,6 +104,7 @@ describeEmbeddedPostgres("task watchdog scheduler", () => {
       originId: overrides.originId,
       originFingerprint: overrides.originFingerprint,
       updatedAt: overrides.updatedAt,
+      monitorNextCheckAt: overrides.monitorNextCheckAt,
       // Default to an "established" issue (created well before the first-run
       // grace window) so the pending-first-run guard does not defer it. Tests
       // exercising the create-race pass an explicit recent `createdAt`.
@@ -333,6 +334,28 @@ describeEmbeddedPostgres("task watchdog scheduler", () => {
       reason: "issue_assigned",
       payload: { issueId: childId },
     });
+    const { service, wakes } = createService();
+
+    const result = await service.reconcileTaskWatchdogs({ companyId });
+
+    expect(result).toMatchObject({ checked: 1, triggered: 0, live: 1 });
+    expect(wakes).toHaveLength(0);
+    const watchdogIssues = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), eq(issues.originKind, "task_watchdog")));
+    expect(watchdogIssues).toHaveLength(0);
+  });
+
+  it("does not trigger while a watched issue has a future monitor", async () => {
+    const companyId = await seedCompany();
+    const sourceId = await seedIssue(companyId, {
+      identifier: "WDOG-MONITOR",
+      status: "in_progress",
+      monitorNextCheckAt: new Date(Date.now() + 60 * 60 * 1000),
+    });
+    const agentId = await seedAgent(companyId);
+    await seedWatchdog(companyId, sourceId, agentId);
     const { service, wakes } = createService();
 
     const result = await service.reconcileTaskWatchdogs({ companyId });

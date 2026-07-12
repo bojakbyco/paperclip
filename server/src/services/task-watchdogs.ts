@@ -787,6 +787,7 @@ export function taskWatchdogService(db: Db, deps: TaskWatchdogServiceDeps = {}) 
           assignee_user_id,
           origin_kind,
           updated_at,
+          monitor_next_check_at,
           created_at,
           0 AS depth
         FROM issues
@@ -806,6 +807,7 @@ export function taskWatchdogService(db: Db, deps: TaskWatchdogServiceDeps = {}) 
           child.assignee_user_id,
           child.origin_kind,
           child.updated_at,
+          child.monitor_next_check_at,
           child.created_at,
           watched_issues.depth + 1
         FROM issues child
@@ -827,6 +829,7 @@ export function taskWatchdogService(db: Db, deps: TaskWatchdogServiceDeps = {}) 
         assignee_user_id AS "assigneeUserId",
         origin_kind AS "originKind",
         updated_at AS "updatedAt",
+        monitor_next_check_at AS "monitorNextCheckAt",
         created_at AS "createdAt"
       FROM watched_issues
     `);
