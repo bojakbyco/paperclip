@@ -559,7 +559,7 @@ The reusable watchdog issue is a child of the watched source issue for audit and
 
 ### Stopped-subtree evaluation
 
-Task watchdog evaluation is conservative. If any included issue has a live run, queued wake, or scheduled retry that should fire without intervention, the subtree is live and the task watchdog does not run.
+Task watchdog evaluation is conservative. If any included issue has a live run, queued wake, scheduled retry, or scheduled issue monitor that should fire without intervention, the subtree is live and the task watchdog does not run. A future `monitorNextCheckAt` on an included issue is a live/waiting path for this classifier: the monitor owner holds a bounded continuation, so the subtree is not stopped. Because monitor state is a fingerprint input, consuming, clearing, or losing that monitor changes durable subtree state and re-enters evaluation.
 
 If no included issue has a live path, Paperclip computes a stop fingerprint from durable subtree state, including at least:
 
@@ -570,7 +570,7 @@ If no included issue has a live path, Paperclip computes a stop fingerprint from
 - terminal or cancelled leaf evidence
 - the watchdog configuration revision, including watchdog agent and instructions changes
 
-If the fingerprint equals the watchdog's last reviewed fingerprint, Paperclip suppresses another watchdog wake. If the fingerprint is new, Paperclip creates or reopens the reusable watchdog issue and wakes the configured watchdog agent with the source issue, watchdog config, stop fingerprint, leaf summary, default mandate, custom instructions, and server-derived capability metadata that names the allowed operations, denied operations, reusable watchdog issue, and non-watchdog target scope.
+If the fingerprint equals the watchdog's last reviewed fingerprint and that review's acceptance is still in force (see "Terminal and conditional acceptance" below), Paperclip suppresses another watchdog wake. If the fingerprint is new, or the prior acceptance was conditional and has expired, Paperclip creates or reopens the reusable watchdog issue and wakes the configured watchdog agent with the source issue, watchdog config, stop fingerprint, leaf summary, default mandate, custom instructions, and server-derived capability metadata that names the allowed operations, denied operations, reusable watchdog issue, and non-watchdog target scope.
 
 Changing the watchdog agent or custom instructions invalidates the reviewed fingerprint and forces a fresh evaluation even if the subtree state did not otherwise change.
 
@@ -601,6 +601,21 @@ A task watchdog may resolve only eligible `request_confirmation` plan confirmati
 
 The watchdog cannot resolve `request_checkbox_confirmation`, `ask_user_questions`, `suggest_tasks`, linked approvals, execution-policy decisions unless it is the typed participant outside watchdog capacity, or document comments written as freeform approval.
 
+### Terminal and conditional acceptance
+
+Every watchdog review that leaves the subtree stopped records which kind of acceptance it is. The reviewed fingerprint suppresses re-wakes only as far as that acceptance reaches.
+
+- **Terminal acceptance** asserts that the stopped state is a legitimate final or waiting disposition. It must name the explicit waiting path: a human owner, a pending interaction or linked approval, or a first-class blocker whose unresolved leaf is itself live or explicitly waiting under section 8. A terminal acceptance suppresses re-wake for the identical fingerprint indefinitely.
+- **Conditional acceptance** asserts that work is live or a bounded continuation is scheduled. It must name its liveness source: a run id, a monitor next-check time, or a queued wake id. It expires when that source resolves or at a bounded re-arm deadline, whichever comes first. The default re-arm deadline is 30 minutes, aligned with the silent active-run watchdog's `continue` re-arm window in section 12. After expiry, a still-stopped subtree re-wakes the watchdog even when the stop fingerprint is unchanged.
+
+An acceptance that names no waiting path and no liveness source is treated as conditional with the default re-arm deadline. A verdict the server rejected as stale during the review — because the subtree turned live mid-review — must not seal the fingerprint at all; the next scan evaluates from current state.
+
+### Bounded same-fingerprint reviews
+
+Consecutive watchdog reviews of an identical stop fingerprint are bounded (default 3). Reaching the bound means the watchdog is cycling without changing the subtree. At the bound, the machinery must stop silently re-reviewing and instead escalate to an explicit human/board interaction on the watched source issue that presents the stop evidence and the watchdog's prior verdicts.
+
+Terminal acceptances do not count toward this bound — they already suppress identical fingerprints — so legitimately waiting trees neither churn nor escalate. Re-arm wakes for an expired conditional acceptance are deduplicated per review cycle, not per fingerprint alone, so a re-arm on an unchanged fingerprint is still delivered.
+
 ### Completion and fingerprint updates
 
 The watchdog's reviewed fingerprint should update only after the watchdog issue reaches a valid disposition:
@@ -609,6 +624,8 @@ The watchdog's reviewed fingerprint should update only after the watchdog issue 
 - `in_review` with a real reviewer, approval, interaction, user owner, monitor, or recovery path
 - `blocked` with first-class blockers or a named external owner/action
 - a watchdog mutation that restores live work, where the subsequent source-subtree mutation naturally changes the stop fingerprint
+
+When the disposition leaves the subtree stopped, the review must also record whether the acceptance is terminal or conditional, and for a conditional acceptance the named liveness source and expiry, as defined above.
 
 If the watchdog moved work forward, Paperclip should not mark the old fingerprint as permanently acceptable just because the watchdog issue completed. The next scan should observe the changed subtree state and either suppress because work is live or compute a new stopped fingerprint later.
 
@@ -636,6 +653,8 @@ Watchdog decisions are explicit operator/recovery-owner decisions:
 - `dismissed_false_positive` records why the review was not actionable
 
 Operators should prefer `snooze` for known time-bounded quiet periods. `continue` is only a short acknowledgement of the current evidence; if the run remains silent after the re-arm window, the periodic watchdog scan can create or update review work again.
+
+The 30-minute `continue` re-arm window and the task watchdog's conditional-acceptance re-arm deadline in section 11 are the same principle: an acknowledgement that the current state is acceptable is time-bounded unless it names a legitimate terminal or waiting path. Only terminal acceptances suppress indefinitely.
 
 The board can record watchdog decisions. The assigned owner of an issue-backed watchdog evaluation can also record them. Other agents cannot.
 
