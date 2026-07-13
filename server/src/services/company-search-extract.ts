@@ -98,6 +98,12 @@ function urlOccurrences(text: string, contains: string) {
   return matches;
 }
 
+function sourceOccurrences(text: string, query: CompanySearchExtractQuery) {
+  return query.kind === "url"
+    ? urlOccurrences(text, query.contains)
+    : literalOccurrences(text, query.contains);
+}
+
 function excerpt(text: string, start: number, length: number) {
   if (text.length <= EXCERPT_MAX_CHARS) {
     return { value: text, truncated: false };
@@ -120,9 +126,7 @@ function extractMatches(sources: ExtractSource[], query: CompanySearchExtractQue
   let matchesTruncated = false;
 
   for (const source of sources) {
-    const occurrences = query.kind === "url"
-      ? urlOccurrences(source.text, query.contains)
-      : literalOccurrences(source.text, query.contains);
+    const occurrences = sourceOccurrences(source.text, query);
     for (const occurrence of occurrences) {
       const dedupeKey = occurrence.value.toLowerCase();
       if (seen.has(dedupeKey)) continue;
@@ -228,7 +232,7 @@ export function companySearchExtractService(db: Db) {
 
       if (scopeIncludes(query.scope, "issues")) {
         for (const row of pageRows) {
-          if (row.title.toLowerCase().includes(query.contains.toLowerCase())) {
+          if (sourceOccurrences(row.title, query).length > 0) {
             addSource({
               issueId: row.id,
               field: "title",
@@ -237,7 +241,7 @@ export function companySearchExtractService(db: Db) {
               source: { type: "issue", issueId: row.id },
             });
           }
-          if (row.description?.toLowerCase().includes(query.contains.toLowerCase())) {
+          if (row.description && sourceOccurrences(row.description, query).length > 0) {
             addSource({
               issueId: row.id,
               field: "description",
@@ -296,7 +300,7 @@ export function companySearchExtractService(db: Db) {
           .orderBy(asc(issueDocuments.key), asc(documents.id));
         for (const row of documentRows) {
           const source = { type: "document" as const, documentId: row.id, documentKey: row.key };
-          if (row.title?.toLowerCase().includes(query.contains.toLowerCase())) {
+          if (row.title && sourceOccurrences(row.title, query).length > 0) {
             addSource({
               issueId: row.issueId,
               field: "document_title",
@@ -305,7 +309,7 @@ export function companySearchExtractService(db: Db) {
               source,
             });
           }
-          if (row.body.toLowerCase().includes(query.contains.toLowerCase())) {
+          if (sourceOccurrences(row.body, query).length > 0) {
             addSource({
               issueId: row.issueId,
               field: "document_body",
