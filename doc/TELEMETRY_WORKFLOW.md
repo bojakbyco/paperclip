@@ -13,6 +13,11 @@ not contain that event yet.
 Use `trackProposed()` only for first-party Paperclip product telemetry. Do not
 use it for plugin, third-party, test, debug, or ad-hoc analytics events.
 
+`trackProposed()` is the planned canonical helper for this workflow and may not
+be available in every checkout yet. Before adding proposal call sites, check the
+current telemetry client README and exports; when the helper is not present,
+follow the current telemetry client guidance instead of assuming it has shipped.
+
 The proposed event name is the future canonical event name. Do not prefix it
 with `proposed.`.
 
@@ -67,7 +72,8 @@ backend review to clean up sensitive client payloads.
 
 Proposal inventory is based on static extraction. Keep call sites extractable:
 
-- Import and call the canonical `trackProposed` helper from the telemetry client.
+- Import and call the canonical `trackProposed` helper from the telemetry client
+  when it is available in your checkout.
 - Pass a string literal event name. Do not use variables, template literals,
   concatenation, or helper calls for the name.
 - Pass an inline object expression for dimensions. Do not use object variables,
