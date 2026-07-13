@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, isNull, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -4005,7 +4005,8 @@ export function issueRoutes(
       throw unprocessable("Reply target comment is missing, belongs to another issue, or was deleted");
     }
 
-    const excerpt = replyTarget.body.slice(0, ISSUE_COMMENT_REPLY_EXCERPT_CHARS);
+    const canonicalReplyTarget = redactQuarantinedBodyForHigherTrust(replyTarget);
+    const excerpt = canonicalReplyTarget.body.slice(0, ISSUE_COMMENT_REPLY_EXCERPT_CHARS);
     return {
       version: requestedMetadata.version ?? 1,
       ...(requestedMetadata.sourceRunId !== undefined
@@ -4020,7 +4021,7 @@ export function issueRoutes(
         authorAgentId: replyTarget.authorAgentId ?? null,
         authorUserId: replyTarget.authorUserId ?? null,
         excerpt,
-        excerptTruncated: excerpt.length < replyTarget.body.length,
+        excerptTruncated: excerpt.length < canonicalReplyTarget.body.length,
       },
     };
   }
@@ -9485,6 +9486,16 @@ export function issueRoutes(
       },
       {
         afterTombstone: async (deletedComment, tx) => {
+          await tx
+            .update(issueComments)
+            .set({
+              metadata: sql`${issueComments.metadata} - 'replyTo'`,
+              updatedAt: new Date(),
+            })
+            .where(and(
+              eq(issueComments.issueId, issue.id),
+              sql`${issueComments.metadata} -> 'replyTo' ->> 'commentId' = ${deletedComment.id}`,
+            ));
           await issueReferencesSvc.syncComment(deletedComment.id, tx);
           await externalObjectsSvc.syncCommentSafely(deletedComment.id, tx);
           annotationCleanup = await documentAnnotationsSvc.cleanupForIssueCommentDeletion(issue.id, deletedComment.id, {

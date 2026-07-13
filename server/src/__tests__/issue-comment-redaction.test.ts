@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import express from "express";
 import request from "supertest";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
@@ -187,6 +187,58 @@ describeEmbeddedPostgres("deleted issue comment redaction", () => {
     ]);
     expect(JSON.stringify(wakePayload)).not.toContain("secret deleted body");
     expect(JSON.stringify(wakePayload)).not.toContain("secret metadata");
+  });
+
+  it("clears persisted reply snapshots when the source comment is deleted", async () => {
+    const { companyId, issueId } = await seedIssue();
+    const targetCommentId = randomUUID();
+    const replyCommentId = randomUUID();
+    await db.insert(issueComments).values([
+      {
+        id: targetCommentId,
+        companyId,
+        issueId,
+        authorUserId: "board-user-1",
+        authorType: "user",
+        body: "Sensitive source body",
+      },
+      {
+        id: replyCommentId,
+        companyId,
+        issueId,
+        authorUserId: "board-user-1",
+        authorType: "user",
+        body: "Reply body",
+        metadata: {
+          version: 1,
+          sourceRunId: "11111111-1111-4111-8111-111111111111",
+          sections: [],
+          replyTo: {
+            commentId: targetCommentId,
+            authorType: "user",
+            authorAgentId: null,
+            authorUserId: "board-user-1",
+            excerpt: "Sensitive source body",
+            excerptTruncated: false,
+          },
+        },
+      },
+    ]);
+
+    const response = await request(createApp(companyId))
+      .delete(`/api/issues/${issueId}/comments/${targetCommentId}`);
+
+    expect(response.status, JSON.stringify(response.body)).toBe(200);
+    const [storedReply] = await db
+      .select({ metadata: issueComments.metadata })
+      .from(issueComments)
+      .where(eq(issueComments.id, replyCommentId));
+    expect(storedReply?.metadata).toEqual({
+      version: 1,
+      sourceRunId: "11111111-1111-4111-8111-111111111111",
+      sections: [],
+    });
+    expect(JSON.stringify(storedReply?.metadata)).not.toContain("Sensitive source body");
   });
 
   it("injects the canonical replied-to comment into wake payloads", async () => {
