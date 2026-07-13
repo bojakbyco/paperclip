@@ -4416,7 +4416,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(comments[0]?.body).toContain("Next action:");
   });
 
-  it("assigns open unassigned blockers back to their creator agent", async () => {
+  it("does NOT reassign board-owned unassigned blockers (responsibleUserId set) to the creator agent", async () => {
     const companyId = randomUUID();
     const creatorAgentId = randomUUID();
     const blockedAssigneeAgentId = randomUUID();
@@ -4458,7 +4458,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       {
         id: blockerIssueId,
         companyId,
-        title: "Fix blocker",
+        title: "Review & merge PR",
         status: "todo",
         priority: "high",
         createdByAgentId: creatorAgentId,
@@ -4473,7 +4473,98 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         status: "blocked",
         priority: "high",
         assigneeAgentId: blockedAssigneeAgentId,
-        responsibleUserId: "responsible-user",
+        issueNumber: 2,
+        identifier: `${issuePrefix}-2`,
+      },
+    ]);
+    await db.insert(issueRelations).values({
+      companyId,
+      issueId: blockerIssueId,
+      relatedIssueId: blockedIssueId,
+      type: "blocks",
+      createdByAgentId: creatorAgentId,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reconcileStrandedAssignedIssues();
+
+    // Board-owned blocker must NOT be reassigned to an agent.
+    expect(result.orphanBlockersAssigned).toBe(0);
+    expect(result.issueIds).not.toContain(blockerIssueId);
+
+    const blocker = await db
+      .select()
+      .from(issues)
+      .where(eq(issues.id, blockerIssueId))
+      .then((rows) => rows[0] ?? null);
+    expect(blocker?.assigneeAgentId).toBeNull();
+
+    // A board-attention comment must have been posted instead.
+    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, blockerIssueId));
+    expect(comments[0]?.body).toContain("Blocked on Board Review");
+    expect(comments[0]?.body).toContain("Board action required");
+
+    // No wakeup should have been enqueued for the creator agent.
+    const wakeups = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, creatorAgentId));
+    expect(wakeups).toHaveLength(0);
+  });
+
+  it("assigns open unassigned blockers back to their creator agent when no responsibleUserId", async () => {
+    const companyId = randomUUID();
+    const creatorAgentId = randomUUID();
+    const blockedAssigneeAgentId = randomUUID();
+    const blockerIssueId = randomUUID();
+    const blockedIssueId = randomUUID();
+    const issuePrefix = `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`;
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix,
+      defaultResponsibleUserId: null,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values([
+      {
+        id: creatorAgentId,
+        companyId,
+        name: "SecurityEngineer",
+        role: "engineer",
+        status: "idle",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: blockedAssigneeAgentId,
+        companyId,
+        name: "CodexCoder",
+        role: "engineer",
+        status: "idle",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+    await db.insert(issues).values([
+      {
+        id: blockerIssueId,
+        companyId,
+        title: "Fix blocker",
+        status: "todo",
+        priority: "high",
+        createdByAgentId: creatorAgentId,
+        issueNumber: 1,
+        identifier: `${issuePrefix}-1`,
+      },
+      {
+        id: blockedIssueId,
+        companyId,
+        title: "Blocked work",
+        status: "blocked",
+        priority: "high",
+        assigneeAgentId: blockedAssigneeAgentId,
         issueNumber: 2,
         identifier: `${issuePrefix}-2`,
       },

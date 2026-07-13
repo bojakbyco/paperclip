@@ -936,6 +936,7 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
         identifier: issues.identifier,
         status: issues.status,
         createdByAgentId: issues.createdByAgentId,
+        responsibleUserId: issues.responsibleUserId,
       })
       .from(issueRelations)
       .innerJoin(issues, eq(issueRelations.issueId, issues.id))
@@ -964,6 +965,29 @@ export function recoveryService(db: Db, deps: { enqueueWakeup: RecoveryWakeup })
     for (const candidate of candidates) {
       if (seen.has(candidate.id)) continue;
       seen.add(candidate.id);
+
+      // Board-owned blockers (responsibleUserId set) must never be auto-assigned
+      // to an agent — the human board member is the intended owner. Emit a
+      // board-attention comment and skip so the parent surfaces as awaiting
+      // board action rather than as a stalled orphan.
+      if (candidate.responsibleUserId) {
+        const relations = await issuesSvc.getRelationSummaries(candidate.id);
+        const blockingLinks = formatIssueLinksForComment(relations.blocks);
+        await issuesSvc.addComment(
+          candidate.id,
+          [
+            "## Blocked on Board Review",
+            "",
+            `This issue is blocking ${blockingLinks} but has no agent assignee.`,
+            "",
+            "- It is owned by a board member (`responsibleUserId` is set) and will not be auto-assigned to an agent.",
+            "- **Board action required**: resolve or reassign this blocker to unblock the dependent work.",
+          ].join("\n"),
+          {},
+        );
+        skipped += 1;
+        continue;
+      }
 
       const creatorAgentId = candidate.createdByAgentId;
       if (!creatorAgentId) {
