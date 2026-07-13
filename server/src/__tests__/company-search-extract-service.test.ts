@@ -145,6 +145,44 @@ describeEmbeddedPostgres("companySearchExtractService", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("keeps URL sources selected by scheme-less queries", async () => {
+    const companyId = await createCompany();
+    const titleUrl = "https://github.com/paperclipai/paperclip/pull/101";
+    const descriptionUrl = "https://github.com/paperclipai/paperclip/pull/102";
+    const documentTitleUrl = "https://github.com/paperclipai/paperclip/pull/103";
+    const documentBodyUrl = "https://github.com/paperclipai/paperclip/pull/104";
+    const issueId = await createIssue(companyId, {
+      title: `Review ${titleUrl}`,
+      description: `Then merge ${descriptionUrl}`,
+    });
+    const documentId = randomUUID();
+    await db.insert(documents).values({
+      id: documentId,
+      companyId,
+      title: `Tracking ${documentTitleUrl}`,
+      latestBody: `Final follow-up ${documentBodyUrl}`,
+    });
+    await db.insert(issueDocuments).values({
+      companyId,
+      issueId,
+      documentId,
+      key: "plan",
+    });
+
+    const result = await svc.extract(companyId, companySearchExtractQuerySchema.parse({
+      contains: "github.com/paperclipai/paperclip/pull",
+      kind: "url",
+      scope: "all",
+    }));
+
+    expect(result.results[0]?.matches.map((match) => [match.field, match.value])).toEqual([
+      ["title", titleUrl],
+      ["description", descriptionUrl],
+      ["document_title", documentTitleUrl],
+      ["document_body", documentBodyUrl],
+    ]);
+  });
+
   it("filters by issue update window and status", async () => {
     const companyId = await createCompany();
     const now = Date.now();
