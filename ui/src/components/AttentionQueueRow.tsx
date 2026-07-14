@@ -23,7 +23,8 @@ import {
   severityBadge,
   sourceMeta,
 } from "../lib/attention";
-import { cn, relativeTime } from "../lib/utils";
+import { getProjectIcon } from "../lib/project-icons";
+import { cn, projectUrl, relativeTime } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import {
@@ -37,7 +38,6 @@ import {
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import { AttentionInteractionResolver } from "./AttentionInteractionResolver";
-import { ProjectTile } from "./ProjectTile";
 
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
@@ -195,10 +195,13 @@ export const AttentionQueueRow = memo(function AttentionQueueRow({
               {item.relatedIssue?.identifier && (
                 <Link
                   to={item.relatedIssue.href ?? "#"}
-                  className="font-mono text-(length:--text-nano) text-muted-foreground hover:text-foreground"
+                  className="inline-flex min-w-0 items-baseline gap-1.5 text-(length:--text-nano) text-muted-foreground hover:text-foreground"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  {item.relatedIssue.identifier}
+                  <span className="font-mono">{item.relatedIssue.identifier}</span>
+                  {item.relatedIssue.title && (
+                    <span className="max-w-(--sz-16rem) truncate">{item.relatedIssue.title}</span>
+                  )}
                 </Link>
               )}
             </div>
@@ -497,17 +500,25 @@ function compactDecisionSuccessLabel(sourceKind: AttentionItem["sourceKind"], ac
   return action === "reject" ? "Confirmation declined" : "Confirmation accepted";
 }
 
-/** Inline project identity keeps useful context without a competing badge. */
+/**
+ * Inline project identity keeps useful context without a competing badge.
+ * The icon renders bare on the card background in the same gray as the name
+ * (no colored tile — the project color stays on project-native surfaces),
+ * and the whole pair links to the project.
+ */
 function ProjectMeta({ project }: { project: NonNullable<AttentionItem["project"]> }) {
+  const Icon = getProjectIcon(project.icon);
   return (
-    <span
-      className="inline-flex max-w-(--sz-12rem) items-center gap-1.5 text-(length:--text-nano) text-muted-foreground"
+    <Link
+      to={projectUrl(project)}
+      className="inline-flex max-w-(--sz-12rem) items-center gap-1.5 text-(length:--text-nano) text-muted-foreground hover:text-foreground"
       title={project.name}
       data-testid="attention-project-meta"
+      onClick={(e) => e.stopPropagation()}
     >
-      <ProjectTile color={project.color} icon={project.icon} size="xs" />
+      <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden />
       <span className="truncate">{project.name}</span>
-    </span>
+    </Link>
   );
 }
 
