@@ -60,24 +60,6 @@ export function sourceMeta(kind: AttentionSourceKind): SourceMeta {
   return SOURCE_META[kind] ?? { label: kind.replaceAll("_", " "), icon: AlertTriangle };
 }
 
-interface SeverityStyle {
-  /** Left accent bar + dot color. */
-  accent: string;
-  dot: string;
-  label: string;
-}
-
-const SEVERITY_STYLE: Record<AttentionSeverity, SeverityStyle> = {
-  critical: { accent: "bg-red-500", dot: "bg-red-500", label: "Critical" },
-  high: { accent: "bg-orange-500", dot: "bg-orange-500", label: "High" },
-  medium: { accent: "bg-yellow-500", dot: "bg-yellow-500", label: "Medium" },
-  low: { accent: "bg-blue-500", dot: "bg-blue-500", label: "Low" },
-};
-
-export function severityStyle(severity: AttentionSeverity): SeverityStyle {
-  return SEVERITY_STYLE[severity] ?? SEVERITY_STYLE.low;
-}
-
 // ---------------------------------------------------------------------------
 // Canonical type → color map (PAP-13409 §4)
 //
@@ -168,10 +150,12 @@ export function attentionToneStyle(item: AttentionItem): AttentionToneStyle {
  */
 export function severityBadge(severity: AttentionSeverity): { label: string; className: string } | null {
   if (severity === "critical") {
-    return { label: "Critical", className: "border-red-500/60 bg-red-500/10 text-red-700 dark:text-red-300" };
+    // Red is reserved for Critical, and only as an outline — no fill. AA on
+    // --card: 4.76:1 light, 4.69:1 dark (--destructive vs --card, WCAG 2.1).
+    return { label: "Critical", className: "border-destructive/60 text-destructive" };
   }
   if (severity === "high") {
-    return { label: "High", className: "border-orange-500/60 bg-orange-500/10 text-orange-700 dark:text-orange-300" };
+    return { label: "High", className: "border-border text-muted-foreground" };
   }
   return null;
 }

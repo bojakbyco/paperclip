@@ -19,7 +19,6 @@ import {
   planAttentionRenderRows,
   saveAttentionGroupBy,
   severityBadge,
-  severityStyle,
   sortAttentionItems,
   sourceMeta,
 } from "./attention";
@@ -110,7 +109,7 @@ describe("attentionBadgeCount", () => {
   });
 });
 
-describe("sourceMeta + severityStyle", () => {
+describe("sourceMeta", () => {
   it("labels every catalog source kind", () => {
     const kinds: AttentionSourceKind[] = [
       "approval",
@@ -130,9 +129,6 @@ describe("sourceMeta + severityStyle", () => {
     }
   });
 
-  it("maps escalation severity to distinct accents", () => {
-    expect(severityStyle("critical").accent).not.toBe(severityStyle("low").accent);
-  });
 });
 
 describe("attentionTone + attentionToneStyle (canonical color map §4)", () => {
@@ -186,12 +182,29 @@ describe("attentionTone + attentionToneStyle (canonical color map §4)", () => {
   });
 });
 
-describe("severityBadge", () => {
+describe("severityBadge (anatomy 2a — outline badges, red = Critical only)", () => {
   it("only surfaces a badge for Critical/High", () => {
     expect(severityBadge("critical")?.label).toBe("Critical");
     expect(severityBadge("high")?.label).toBe("High");
     expect(severityBadge("medium")).toBeNull();
     expect(severityBadge("low")).toBeNull();
+  });
+
+  it("draws Critical as an outline on the destructive tokens — the page's only red", () => {
+    const badge = severityBadge("critical");
+    expect(badge?.className).toContain("border-destructive");
+    expect(badge?.className).toContain("text-destructive");
+    // Outline, not filled: no background class of any kind.
+    expect(badge?.className).not.toMatch(/\bbg-/);
+    expect(badge?.className).not.toMatch(/red|orange/);
+  });
+
+  it("draws High as a neutral outline (no palette color)", () => {
+    const badge = severityBadge("high");
+    expect(badge?.className).toContain("border-border");
+    expect(badge?.className).toContain("text-muted-foreground");
+    expect(badge?.className).not.toMatch(/\bbg-/);
+    expect(badge?.className).not.toMatch(/red|orange|destructive/);
   });
 });
 
