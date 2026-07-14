@@ -58,32 +58,32 @@ describe("TelemetryClient runtime event gate", () => {
     const { client, stateFactory } = makeClient();
 
     trackSkillCreated(client, {
-      skill_id: "11111111-1111-4111-8111-111111111111",
-      creation_source: "blank",
-      sharing_scope: "company",
-      category_count: 1,
-      file_count: 2,
+      skillId: "11111111-1111-4111-8111-111111111111",
+      creationSource: "blank",
+      sharingScope: "company",
+      categoryCount: 1,
+      fileCount: 2,
     });
     trackSkillVersionSaved(client, {
-      skill_id: "11111111-1111-4111-8111-111111111111",
-      revision_number: 2,
-      file_type: "skill",
+      skillId: "11111111-1111-4111-8111-111111111111",
+      revisionNumber: 2,
+      fileType: "skill",
     });
     trackSkillTestRun(client, {
-      skill_id: "11111111-1111-4111-8111-111111111111",
+      skillId: "11111111-1111-4111-8111-111111111111",
       status: "queued",
-      run_source: "run",
-      ad_hoc: true,
-      template_used: false,
+      runSource: "run",
+      adHoc: true,
+      templateUsed: false,
     });
     trackSkillForked(client, {
-      skill_id: "22222222-2222-4222-8222-222222222222",
-      fork_from_skill_id: "11111111-1111-4111-8111-111111111111",
-      source_type: "catalog",
-      sharing_scope: "private",
-      reassign_agent_count: 0,
+      skillId: "22222222-2222-4222-8222-222222222222",
+      forkFromSkillId: "11111111-1111-4111-8111-111111111111",
+      sourceType: "catalog",
+      sharingScope: "private",
+      reassignAgentCount: 0,
     });
-    trackSkillShareLinkCopied(client, { sharing_scope: "public_link" });
+    trackSkillShareLinkCopied(client, { sharingScope: "public_link" });
 
     await client.flush();
 
